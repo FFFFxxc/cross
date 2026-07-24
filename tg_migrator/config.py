@@ -10,7 +10,7 @@ from typing import Any
 
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = PROJECT_DIR / ".data"
+DATA_DIR = Path(os.getenv("TG_DATA_DIR") or PROJECT_DIR / ".data").expanduser()
 TARGETS_FILE = DATA_DIR / "targets.json"
 SESSION_FILE = DATA_DIR / "telegram"
 STATE_FILE = DATA_DIR / "state.sqlite3"
@@ -93,6 +93,20 @@ def load_targets(
             "--source <источник> --destination <назначение>"
         )
     return Targets(normalize_peer(source), normalize_peer(destination))
+
+
+def load_session_string() -> str | None:
+    """Строка сессии Telethon (StringSession) из окружения.
+
+    Используется на серверах без постоянного диска (например,
+    Hugging Face Spaces): секрет TG_SESSION_STRING заменяет файловую
+    сессию в .data/.
+    """
+    value = os.getenv("TG_SESSION_STRING")
+    if value is None:
+        return None
+    value = value.strip()
+    return value or None
 
 
 def _keychain_get(account: str) -> str | None:

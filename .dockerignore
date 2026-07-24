@@ -1,8 +1,12 @@
+.git
+.gitignore
 .data/
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.DS_Store
 *.egg-info/
 *.swp
+.DS_Store
+tests/
+AGENTS.md

@@ -12,11 +12,12 @@ from .config import (
     load_targets,
     save_targets,
 )
+from .health import maybe_start_health_server
 from .migrator import Progress, TransferMode, migrate_posts
 from .selection import latest_posts, parse_start_date, posts_from_date
 from .service import install_service, service_status, uninstall_service
 from .state import MigrationState
-from .telegram import authorize, build_client
+from .telegram import authorize, build_client, session_to_string
 from .watch import run_watcher
 
 
@@ -33,6 +34,17 @@ def _parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("configure-secrets")
     subparsers.add_parser("auth")
+    export = subparsers.add_parser(
+        "export-session",
+        help="Напечатать строку сессии (StringSession) для серверов "
+        "без диска, например Hugging Face Spaces.",
+    )
+    export.add_argument(
+        "--new",
+        action="store_true",
+        help="Создать отдельную новую сессию (потребуется вход с кодом), "
+        "не трогая локальную файловую сессию.",
+    )
     subparsers.add_parser("verify")
     subparsers.add_parser("watch")
     subparsers.add_parser("install-service")
@@ -61,12 +73,26 @@ def _chat_name(entity) -> str:
 
 async def _run_connected(args) -> None:
     credentials = load_credentials()
-    client = build_client(credentials)
+    client = build_client(
+        credentials,
+        fresh_string_session=getattr(args, "new", False),
+    )
     await authorize(client, credentials)
     try:
         if args.command == "auth":
             me = await client.get_me()
             print(f"Авторизация выполнена: {me.first_name} (id {me.id}).")
+            return
+
+        if args.command == "export-session":
+            me = await client.get_me()
+            print(
+                f"Строка сессии для аккаунта {me.first_name} (id {me.id}).\n"
+                "Никому её не передавайте: она даёт полный доступ "
+                "к аккаунту.\n",
+                file=sys.stderr,
+            )
+            print(session_to_string(client))
             return
 
         targets = load_targets()
@@ -84,6 +110,7 @@ async def _run_connected(args) -> None:
             return
 
         if args.command == "watch":
+            maybe_start_health_server()
             await run_watcher(client, targets)
             return
 
