@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: telegram-post-migrator
+Version: 0.1.0
+Summary: Safe Telegram post migration with date/count filters and Saved Messages control
+Requires-Python: >=3.11
+Requires-Dist: Telethon==1.44.0

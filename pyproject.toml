@@ -1,0 +1,19 @@
+[project]
+name = "telegram-post-migrator"
+version = "0.1.0"
+description = "Safe Telegram post migration with date/count filters and Saved Messages control"
+requires-python = ">=3.11"
+dependencies = [
+  "Telethon==1.44.0",
+]
+
+[project.scripts]
+tg-migrator = "tg_migrator.__main__:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tg_migrator*"]
+
