@@ -11,7 +11,7 @@ from telethon.errors import (
     RPCError,
 )
 
-from .selection import Post
+from .selection import Post, sanitize_message_text
 from .state import MigrationState
 
 
@@ -90,12 +90,44 @@ async def migrate_posts(
         else:
             while True:
                 try:
-                    await client.forward_messages(
+                    forwarded = await client.forward_messages(
                         destination,
                         ids_to_send,
                         from_peer=source,
                         drop_author=mode is TransferMode.COPY,
                     )
+                    sent_messages = (
+                        list(forwarded)
+                        if isinstance(forwarded, (list, tuple))
+                        else [forwarded]
+                    )
+                    source_messages = [
+                        message
+                        for message in post.messages
+                        if message.id in ids_to_send
+                    ]
+                    for source_message, sent_message in zip(
+                        source_messages,
+                        sent_messages,
+                    ):
+                        original_text = (
+                            getattr(source_message, "raw_text", None)
+                            or getattr(source_message, "message", None)
+                            or ""
+                        )
+                        if not original_text:
+                            continue
+                        cleaned_text, entities = sanitize_message_text(
+                            original_text,
+                            list(getattr(source_message, "entities", None) or []),
+                        )
+                        if cleaned_text != original_text:
+                            await client.edit_message(
+                                destination,
+                                sent_message,
+                                text=cleaned_text,
+                                formatting_entities=entities,
+                            )
                     break
                 except FloodWaitError as exc:
                     await asyncio.sleep(exc.seconds + 1)

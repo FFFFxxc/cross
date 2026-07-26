@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 import re
@@ -15,6 +16,8 @@ ALLOWED_LINKS = {
 _VISIBLE_LINK_RE = re.compile(
     r"(?i)(?:https?://|www\.|(?:t\.me|telegram\.me)/)[^\s<>()]+"
 )
+_MAX_URL_RE = re.compile(r"https?://max\.ru/channel_anime2d/?", re.IGNORECASE)
+_MAX_PHRASE_RE = re.compile(r"мы\s+в\s+(?:максе|max)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,69 @@ def _transferable(message: Any) -> bool:
 
 def _normalize_link(link: str) -> str:
     return link.strip().rstrip(".,!?;:)]}>").rstrip("/").lower()
+
+
+def _utf16_len(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _removal_spans(text: str) -> list[tuple[int, int]]:
+    matches = [
+        *_MAX_URL_RE.finditer(text),
+        *_MAX_PHRASE_RE.finditer(text),
+    ]
+    spans: list[tuple[int, int]] = []
+    for match in sorted(matches, key=lambda item: item.start()):
+        start, end = match.span()
+        while start > 0 and text[start - 1] in " \t":
+            start -= 1
+        while end < len(text) and text[end] in " \t\r\n":
+            end += 1
+        if match.re is _MAX_PHRASE_RE:
+            while end < len(text) and text[end] in ":：,;.!?-–—":
+                end += 1
+            while end < len(text) and text[end] in " \t":
+                end += 1
+        spans.append((start, end))
+    merged: list[tuple[int, int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def sanitize_message_text(text: str, entities: list[Any] | None) -> tuple[str, list[Any]]:
+    """Remove MAX promotion while preserving Telegram entity offsets."""
+    spans = _removal_spans(text)
+    if not spans:
+        return text, [copy(entity) for entity in entities or []]
+
+    cleaned = text
+    for start, end in reversed(spans):
+        cleaned = cleaned[:start] + cleaned[end:]
+
+    adjusted: list[Any] = []
+    for entity in entities or []:
+        original_start = int(getattr(entity, "offset", 0))
+        original_end = original_start + int(getattr(entity, "length", 0))
+        removed_before = 0
+        overlaps = False
+        for start, end in spans:
+            start_u16 = _utf16_len(text[:start])
+            end_u16 = _utf16_len(text[:end])
+            if original_start < end_u16 and original_end > start_u16:
+                overlaps = True
+                break
+            if end_u16 <= original_start:
+                removed_before += end_u16 - start_u16
+        if overlaps:
+            continue
+        clone = copy(entity)
+        clone.offset = original_start - removed_before
+        adjusted.append(clone)
+    return cleaned, adjusted
 
 
 def _message_links(message: Any) -> list[str]:

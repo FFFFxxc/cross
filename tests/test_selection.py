@@ -2,7 +2,12 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-from tg_migrator.selection import latest_posts, parse_start_date, posts_from_date
+from tg_migrator.selection import (
+    latest_posts,
+    parse_start_date,
+    posts_from_date,
+    sanitize_message_text,
+)
 
 
 def message(
@@ -31,6 +36,31 @@ async def iterator(items):
 
 
 class SelectionTests(unittest.IsolatedAsyncioTestCase):
+    def test_sanitizer_removes_max_link_and_phrase_but_keeps_telegram_link(self):
+        text = (
+            "📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot) "
+            "Мы в MAX: https://max.ru/channel_anime2d"
+        )
+
+        cleaned, entities = sanitize_message_text(text, [])
+
+        self.assertEqual(cleaned, "📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot)")
+        self.assertEqual(entities, [])
+
+    def test_sanitizer_shifts_entity_offsets_after_removed_prefix(self):
+        text = "Мы в Максе: 🙂 жирный текст"
+        prefix = "Мы в Максе: 🙂 "
+        entity = SimpleNamespace(
+            offset=len(prefix.encode("utf-16-le")) // 2,
+            length=len("жирный".encode("utf-16-le")) // 2,
+        )
+
+        cleaned, entities = sanitize_message_text(text, [entity])
+
+        self.assertEqual(cleaned, "🙂 жирный текст")
+        self.assertEqual(entities[0].offset, len("🙂 ".encode("utf-16-le")) // 2)
+        self.assertEqual(entities[0].length, len("жирный".encode("utf-16-le")) // 2)
+
     async def test_latest_counts_album_as_one_post_and_orders_oldest_first(self):
         items = [
             message(5, 5),
