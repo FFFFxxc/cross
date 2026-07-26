@@ -61,6 +61,14 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entities[0].offset, len("🙂 ".encode("utf-16-le")) // 2)
         self.assertEqual(entities[0].length, len("жирный".encode("utf-16-le")) // 2)
 
+    def test_sanitizer_removes_emoji_on_max_only_line(self):
+        text = "👀 ХОТ КОНТЕНТ\n🥵 МЫ В МАКСЕ"
+
+        cleaned, entities = sanitize_message_text(text, [])
+
+        self.assertEqual(cleaned, "👀 ХОТ КОНТЕНТ")
+        self.assertEqual(entities, [])
+
     async def test_latest_counts_album_as_one_post_and_orders_oldest_first(self):
         items = [
             message(5, 5),

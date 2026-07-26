@@ -82,6 +82,22 @@ def _removal_spans(text: str) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
     for match in sorted(matches, key=lambda item: item.start()):
         start, end = match.span()
+        if match.re is _MAX_PHRASE_RE:
+            line_start = text.rfind("\n", 0, start) + 1
+            line_end = text.find("\n", end)
+            if line_end == -1:
+                line_end = len(text)
+            surrounding = text[line_start:start] + text[end:line_end]
+            surrounding = _MAX_URL_RE.sub("", surrounding)
+            if not any(character.isalnum() for character in surrounding):
+                start = line_start
+                end = line_end
+                if end < len(text):
+                    end += 1
+                elif start > 0:
+                    start -= 1
+                spans.append((start, end))
+                continue
         while start > 0 and text[start - 1] in " \t":
             start -= 1
         while end < len(text) and text[end] in " \t\r\n":
