@@ -8,7 +8,10 @@ from zoneinfo import ZoneInfo
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
-ALLOWED_LINK = "https://t.me/fulli4k_bot"
+ALLOWED_LINKS = {
+    "https://t.me/fulli4k_bot",
+    "https://max.ru/channel_anime2d",
+}
 _VISIBLE_LINK_RE = re.compile(
     r"(?i)(?:https?://|www\.|(?:t\.me|telegram\.me)/)[^\s<>()]+"
 )
@@ -80,8 +83,11 @@ def _message_links(message: Any) -> list[str]:
 
 
 def _has_disallowed_link(message: Any) -> bool:
-    allowed = _normalize_link(ALLOWED_LINK)
-    return any(_normalize_link(link) != allowed for link in _message_links(message))
+    allowed = {_normalize_link(link) for link in ALLOWED_LINKS}
+    return any(
+        _normalize_link(link) not in allowed
+        for link in _message_links(message)
+    )
 
 
 def _post_is_allowed(messages: list[Any]) -> bool:

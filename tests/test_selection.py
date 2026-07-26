@@ -71,6 +71,21 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         posts = await latest_posts(iterator(items), 2)
         self.assertEqual([post.ids for post in posts], [(1,), (3,)])
 
+    async def test_exact_max_channel_link_is_allowed(self):
+        items = [
+            message(
+                2,
+                2,
+                text=(
+                    "📢 ХОТ КОНТЕНТ https://t.me/fulli4k_bot "
+                    "https://max.ru/channel_anime2d"
+                ),
+            ),
+            message(1, 1, text="обычный пост"),
+        ]
+        posts = await latest_posts(iterator(items), 2)
+        self.assertEqual([post.ids for post in posts], [(1,), (2,)])
+
     async def test_link_in_any_album_item_filters_the_whole_album(self):
         items = [
             message(4, 4, text="подпись", grouped_id=8),
