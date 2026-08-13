@@ -46,7 +46,7 @@ Sleep = Callable[[float], Awaitable[None]]
 
 def _ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context(cafile=certifi.where())
-    certificate = Path(__file__).resolve().parent.parent / "certs" / "russian-trusted-root-ca.pem"
+    certificate = Path(__file__).resolve().parent / "certs" / "russian-trusted-root-ca.pem"
     context.load_verify_locations(cafile=str(certificate))
     return context
 

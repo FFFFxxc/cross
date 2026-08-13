@@ -1,0 +1,36 @@
+services:
+  - type: web
+    name: cross
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: TG_API_ID
+        sync: false
+      - key: TG_API_HASH
+        sync: false
+      - key: TG_PHONE
+        sync: false
+      - key: TG_SESSION_STRING
+        sync: false
+      - key: TG_AUTOMATION_ENABLED
+        value: "false"
+      - key: TG_OWNER_IDS
+        value: "8235497168"
+      - key: TG_DESTINATION
+        value: webnmy
+      - key: TG_INITIAL_SOURCE
+        value: animeworldmem
+      - key: DATABASE_URL
+        sync: false
+      - key: MAX_BOT_TOKEN
+        sync: false
+      - key: MAX_CHANNEL
+        value: channel_animenaruto
+      - key: MAX_SIGNATURE_TEXT
+        value: НАШ ТГК
+      - key: MAX_SIGNATURE_URL
+        value: https://t.me/webm4ik
