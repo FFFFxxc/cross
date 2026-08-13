@@ -3,8 +3,11 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from tg_migrator.selection import (
+    Post,
     latest_posts,
     parse_start_date,
+    post_activity,
+    post_media_kind,
     posts_from_date,
     sanitize_message_text,
 )
@@ -17,16 +20,27 @@ def message(
     grouped_id=None,
     action=None,
     entities=None,
+    media=None,
+    photo=None,
+    video=None,
+    views=0,
+    forwards=0,
+    reactions=None,
 ):
     return SimpleNamespace(
         id=message_id,
         date=datetime(2025, 6, day, 12, tzinfo=timezone.utc),
         message=text,
         raw_text=text,
-        media=None,
+        media=media,
+        photo=photo,
+        video=video,
         grouped_id=grouped_id,
         action=action,
         entities=entities,
+        views=views,
+        forwards=forwards,
+        reactions=reactions,
     )
 
 
@@ -36,16 +50,37 @@ async def iterator(items):
 
 
 class SelectionTests(unittest.IsolatedAsyncioTestCase):
-    def test_sanitizer_removes_max_link_and_phrase_but_keeps_telegram_link(self):
+    def test_sanitizer_removes_every_foreign_link_line(self):
         text = (
-            "📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot) "
+            "Обычный текст\n"
+            "📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot)\n"
             "Мы в MAX: https://max.ru/channel_anime2d"
         )
 
         cleaned, entities = sanitize_message_text(text, [])
 
-        self.assertEqual(cleaned, "📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot)")
+        self.assertEqual(cleaned, "Обычный текст")
         self.assertEqual(entities, [])
+
+    def test_sanitizer_removes_hidden_link_and_username_lines(self):
+        text = "Жирный текст\nНАЖМИ СЮДА\nАвтор: @foreign_channel"
+        prefix = "Жирный текст\n"
+        hidden = SimpleNamespace(
+            offset=len(prefix.encode("utf-16-le")) // 2,
+            length=len("НАЖМИ СЮДА".encode("utf-16-le")) // 2,
+            url="https://bad.example",
+        )
+        bold = SimpleNamespace(
+            offset=0,
+            length=len("Жирный".encode("utf-16-le")) // 2,
+        )
+
+        cleaned, entities = sanitize_message_text(text, [bold, hidden])
+
+        self.assertEqual(cleaned, "Жирный текст")
+        self.assertEqual(len(entities), 1)
+        self.assertEqual(entities[0].offset, 0)
+        self.assertEqual(entities[0].length, 6)
 
     def test_sanitizer_shifts_entity_offsets_after_removed_prefix(self):
         text = "Мы в Максе: 🙂 жирный текст"
@@ -61,13 +96,17 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entities[0].offset, len("🙂 ".encode("utf-16-le")) // 2)
         self.assertEqual(entities[0].length, len("жирный".encode("utf-16-le")) // 2)
 
-    def test_sanitizer_removes_emoji_on_max_only_line(self):
+    def test_sanitizer_removes_promo_only_lines(self):
         text = "👀 ХОТ КОНТЕНТ\n🥵 МЫ В МАКСЕ"
 
         cleaned, entities = sanitize_message_text(text, [])
 
-        self.assertEqual(cleaned, "👀 ХОТ КОНТЕНТ")
+        self.assertEqual(cleaned, "")
         self.assertEqual(entities, [])
+
+    def test_sanitizer_removes_orphan_emoji_after_promo(self):
+        cleaned, _ = sanitize_message_text("Текст\n🥵\nФУЛЛ В КАНАЛЕ", [])
+        self.assertEqual(cleaned, "Текст")
 
     async def test_latest_counts_album_as_one_post_and_orders_oldest_first(self):
         items = [
@@ -88,7 +127,7 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         posts = await latest_posts(iterator(items), 2)
         self.assertEqual([post.ids for post in posts], [(1,), (2,)])
 
-    async def test_links_are_filtered_but_allowed_bot_link_is_kept(self):
+    async def test_linked_posts_remain_eligible_for_cleaning(self):
         items = [
             message(4, 4, text="реклама https://bad.example"),
             message(3, 3, text="📢 ХОТ КОНТЕНТ (https://t.me/fulli4k_bot)"),
@@ -106,8 +145,8 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
             ),
             message(1, 1, text="обычный пост"),
         ]
-        posts = await latest_posts(iterator(items), 2)
-        self.assertEqual([post.ids for post in posts], [(1,), (3,)])
+        posts = await latest_posts(iterator(items), 4)
+        self.assertEqual([post.ids for post in posts], [(1,), (2,), (3,), (4,)])
 
     async def test_exact_max_channel_link_is_allowed(self):
         items = [
@@ -124,14 +163,14 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         posts = await latest_posts(iterator(items), 2)
         self.assertEqual([post.ids for post in posts], [(1,), (2,)])
 
-    async def test_link_in_any_album_item_filters_the_whole_album(self):
+    async def test_link_in_album_does_not_drop_media(self):
         items = [
             message(4, 4, text="подпись", grouped_id=8),
             message(3, 4, text="https://bad.example", grouped_id=8),
             message(2, 2),
         ]
         posts = await latest_posts(iterator(items), 2)
-        self.assertEqual([post.ids for post in posts], [(2,)])
+        self.assertEqual([post.ids for post in posts], [(2,), (3, 4)])
 
     async def test_from_date_is_inclusive_and_chronological(self):
         items = [message(3, 3), message(2, 2), message(1, 1)]
@@ -145,6 +184,39 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
             parsed,
             datetime(2025, 6, 1, 21, tzinfo=timezone.utc),
         )
+
+    def test_post_media_kind_prefers_video_in_mixed_album(self):
+        post = Post(
+            "album:1",
+            (
+                message(1, 1, media=object(), photo=object()),
+                message(2, 1, media=object(), video=object()),
+            ),
+        )
+        self.assertEqual(post_media_kind(post), "video")
+        self.assertEqual(
+            post_media_kind(Post("message:3", (message(3, 1, media=object(), photo=object()),))),
+            "image",
+        )
+        self.assertEqual(post_media_kind(Post("message:4", (message(4, 1),))), "any")
+
+    def test_post_activity_combines_views_forwards_and_reactions(self):
+        reactions = SimpleNamespace(
+            results=[SimpleNamespace(count=4), SimpleNamespace(count=2)]
+        )
+        post = Post(
+            "message:1",
+            (
+                message(
+                    1,
+                    1,
+                    views=100,
+                    forwards=3,
+                    reactions=reactions,
+                ),
+            ),
+        )
+        self.assertEqual(post_activity(post), 139)
 
 
 if __name__ == "__main__":

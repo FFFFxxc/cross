@@ -9,15 +9,19 @@ from zoneinfo import ZoneInfo
 
 
 MOSCOW = ZoneInfo("Europe/Moscow")
-ALLOWED_LINKS = {
-    "https://t.me/fulli4k_bot",
-    "https://max.ru/channel_anime2d",
-}
 _VISIBLE_LINK_RE = re.compile(
     r"(?i)(?:https?://|www\.|(?:t\.me|telegram\.me)/)[^\s<>()]+"
 )
-_MAX_URL_RE = re.compile(r"https?://max\.ru/channel_anime2d/?", re.IGNORECASE)
-_MAX_PHRASE_RE = re.compile(r"мы\s+в\s+(?:максе|max)", re.IGNORECASE)
+_MENTION_RE = re.compile(r"(?<![\w@])@[A-Za-z0-9_]{5,}")
+_PROMO_RE = re.compile(
+    r"(?i)(?:"
+    r"мы\s+в\s+(?:максе|max)|"
+    r"хот\s+контент|"
+    r"фулл(?:\s+(?:в|на)\s+[^\n]+)?|"
+    r"наш\s+(?:тгк|телеграм|канал)|"
+    r"подпис(?:аться|ывай(?:ся)?|ка)"
+    r")"
+)
 
 
 @dataclass(frozen=True)
@@ -66,60 +70,99 @@ def _transferable(message: Any) -> bool:
     )
 
 
-def _normalize_link(link: str) -> str:
-    return link.strip().rstrip(".,!?;:)]}>").rstrip("/").lower()
-
-
 def _utf16_len(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
 
-def _removal_spans(text: str) -> list[tuple[int, int]]:
-    matches = [
-        *_MAX_URL_RE.finditer(text),
-        *_MAX_PHRASE_RE.finditer(text),
-    ]
+def _index_from_utf16(text: str, offset: int) -> int:
+    consumed = 0
+    for index, character in enumerate(text):
+        if consumed >= offset:
+            return index
+        consumed += _utf16_len(character)
+    return len(text)
+
+
+def _line_span(text: str, start: int, end: int) -> tuple[int, int]:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    if line_end == -1:
+        line_end = len(text)
+        if line_start > 0:
+            line_start -= 1
+    else:
+        line_end += 1
+    return line_start, line_end
+
+
+def _entity_removes_line(entity: Any) -> bool:
+    name = entity.__class__.__name__.lower()
+    return bool(
+        getattr(entity, "url", None)
+        or "url" in name
+        or "mention" in name
+        or "email" in name
+    )
+
+
+def _removal_spans(text: str, entities: list[Any] | None) -> list[tuple[int, int]]:
     spans: list[tuple[int, int]] = []
-    for match in sorted(matches, key=lambda item: item.start()):
+
+    for match in [*_VISIBLE_LINK_RE.finditer(text), *_MENTION_RE.finditer(text)]:
+        spans.append(_line_span(text, *match.span()))
+
+    for entity in entities or ():
+        if not _entity_removes_line(entity):
+            continue
+        start_u16 = int(getattr(entity, "offset", 0))
+        end_u16 = start_u16 + int(getattr(entity, "length", 0))
+        start = _index_from_utf16(text, start_u16)
+        end = _index_from_utf16(text, end_u16)
+        spans.append(_line_span(text, start, end))
+
+    for match in _PROMO_RE.finditer(text):
         start, end = match.span()
-        if match.re is _MAX_PHRASE_RE:
-            line_start = text.rfind("\n", 0, start) + 1
-            line_end = text.find("\n", end)
-            if line_end == -1:
-                line_end = len(text)
-            surrounding = text[line_start:start] + text[end:line_end]
-            surrounding = _MAX_URL_RE.sub("", surrounding)
-            if not any(character.isalnum() for character in surrounding):
-                start = line_start
-                end = line_end
-                if end < len(text):
-                    end += 1
-                elif start > 0:
-                    start -= 1
-                spans.append((start, end))
-                continue
+        line_start = text.rfind("\n", 0, start) + 1
+        line_end = text.find("\n", end)
+        if line_end == -1:
+            line_end = len(text)
+        surrounding = text[line_start:start] + text[end:line_end]
+        if not any(character.isalnum() for character in surrounding):
+            spans.append(_line_span(text, start, end))
+            continue
         while start > 0 and text[start - 1] in " \t":
             start -= 1
         while end < len(text) and text[end] in " \t\r\n":
             end += 1
-        if match.re is _MAX_PHRASE_RE:
-            while end < len(text) and text[end] in ":：,;.!?-–—":
-                end += 1
-            while end < len(text) and text[end] in " \t":
-                end += 1
+        while end < len(text) and text[end] in ":：,;.!?-–—":
+            end += 1
+        while end < len(text) and text[end] in " \t":
+            end += 1
         spans.append((start, end))
+
+    position = 0
+    for line in text.splitlines(keepends=True):
+        content = line.strip()
+        if content and not any(character.isalnum() or character == "#" for character in content):
+            spans.append((position, position + len(line)))
+        position += len(line)
+
     merged: list[tuple[int, int]] = []
-    for start, end in spans:
+    for start, end in sorted(spans):
         if merged and start <= merged[-1][1]:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
             merged.append((start, end))
+    if merged and merged[-1][1] == len(text):
+        start, end = merged[-1]
+        if start > 0 and text[start - 1] == "\n":
+            merged[-1] = (start - 1, end)
     return merged
 
 
 def sanitize_message_text(text: str, entities: list[Any] | None) -> tuple[str, list[Any]]:
-    """Remove MAX promotion while preserving Telegram entity offsets."""
-    spans = _removal_spans(text)
+    """Remove foreign promotion while preserving Telegram entity offsets."""
+    spans = _removal_spans(text, entities)
     if not spans:
         return text, [copy(entity) for entity in entities or []]
 
@@ -149,33 +192,6 @@ def sanitize_message_text(text: str, entities: list[Any] | None) -> tuple[str, l
     return cleaned, adjusted
 
 
-def _message_links(message: Any) -> list[str]:
-    """Return visible and hidden links attached to a Telegram message."""
-    raw_text = (
-        getattr(message, "raw_text", None)
-        or getattr(message, "message", None)
-        or ""
-    )
-    links = list(_VISIBLE_LINK_RE.findall(raw_text))
-    for entity in getattr(message, "entities", None) or ():
-        entity_url = getattr(entity, "url", None)
-        if entity_url:
-            links.append(str(entity_url))
-    return links
-
-
-def _has_disallowed_link(message: Any) -> bool:
-    allowed = {_normalize_link(link) for link in ALLOWED_LINKS}
-    return any(
-        _normalize_link(link) not in allowed
-        for link in _message_links(message)
-    )
-
-
-def _post_is_allowed(messages: list[Any]) -> bool:
-    return not any(_has_disallowed_link(message) for message in messages)
-
-
 def _key(message: Any) -> str:
     grouped_id = getattr(message, "grouped_id", None)
     if grouped_id is not None:
@@ -190,7 +206,7 @@ def _post(key: str, messages: list[Any]) -> Post:
 def post_from_messages(messages: list[Any] | tuple[Any, ...]) -> Post | None:
     """Build one new-post unit for the live listener."""
     transferable = [message for message in messages if _transferable(message)]
-    if not transferable or not _post_is_allowed(transferable):
+    if not transferable:
         return None
     return _post(_key(transferable[0]), transferable)
 
@@ -211,8 +227,7 @@ async def latest_posts(
             continue
         message_key = _key(message)
         if current_key is not None and message_key != current_key:
-            if _post_is_allowed(current_messages):
-                posts.append(_post(current_key, current_messages))
+            posts.append(_post(current_key, current_messages))
             if len(posts) >= count:
                 break
             current_messages = []
@@ -222,7 +237,6 @@ async def latest_posts(
         if (
             current_key is not None
             and len(posts) < count
-            and _post_is_allowed(current_messages)
         ):
             posts.append(_post(current_key, current_messages))
 
@@ -254,9 +268,33 @@ async def posts_from_date(
     posts = [
         _post(key, value)
         for key, value in posts_by_key.items()
-        if _post_is_allowed(value)
     ]
     return sorted(
         posts,
         key=lambda post: (post.published_at, min(post.ids)),
     )
+
+
+def post_media_kind(post: Post) -> str:
+    for message in post.messages:
+        document = getattr(message, "document", None)
+        mime_type = (getattr(document, "mime_type", None) or "").lower()
+        if (
+            getattr(message, "video", None) is not None
+            or getattr(message, "gif", None) is not None
+            or mime_type.startswith("video/")
+        ):
+            return "video"
+    if any(getattr(message, "photo", None) is not None for message in post.messages):
+        return "image"
+    return "any"
+
+
+def post_activity(post: Post) -> int:
+    score = 0
+    for message in post.messages:
+        score += int(getattr(message, "views", 0) or 0)
+        score += 3 * int(getattr(message, "forwards", 0) or 0)
+        reactions = getattr(getattr(message, "reactions", None), "results", None) or ()
+        score += 5 * sum(int(getattr(reaction, "count", 0) or 0) for reaction in reactions)
+    return score
