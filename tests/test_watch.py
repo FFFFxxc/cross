@@ -1,8 +1,10 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from telethon.errors.common import InvalidBufferError
 
-from tg_migrator.watch import maintain_connection
+from tg_migrator.config import AutomationConfig, Targets
+from tg_migrator.watch import maintain_connection, run_watcher
 
 
 class StopSignal(Exception):
@@ -41,6 +43,54 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.run_calls, 2)
         self.assertEqual(client.disconnect_calls, 1)
         self.assertEqual(client.connect_calls, 1)
+
+    def automation_config(self, enabled):
+        return AutomationConfig(
+            enabled=enabled,
+            owner_ids=frozenset({8235497168}),
+            destination="webnmy",
+            initial_source="animeworldmem",
+            database_url=None,
+            max_token="token",
+            max_channel="channel_animenaruto",
+            max_api_base="https://platform-api2.max.ru",
+            signature_text="НАШ ТГК",
+            signature_url="https://t.me/webm4ik",
+            queue_minimum=18,
+            refill_interval=900,
+            scan_limit=120,
+            fresh_days=30,
+        )
+
+    async def test_disabled_config_preserves_legacy_watcher(self):
+        legacy = AsyncMock()
+        automation = AsyncMock()
+        with (
+            patch("tg_migrator.watch._run_legacy_watcher", legacy),
+            patch("tg_migrator.watch._run_automation_watcher", automation),
+        ):
+            await run_watcher(
+                object(),
+                Targets("old-source", "webnmy"),
+                self.automation_config(False),
+            )
+        legacy.assert_awaited_once()
+        automation.assert_not_awaited()
+
+    async def test_enabled_config_uses_automation_watcher(self):
+        legacy = AsyncMock()
+        automation = AsyncMock()
+        with (
+            patch("tg_migrator.watch._run_legacy_watcher", legacy),
+            patch("tg_migrator.watch._run_automation_watcher", automation),
+        ):
+            await run_watcher(
+                object(),
+                Targets("old-source", "webnmy"),
+                self.automation_config(True),
+            )
+        automation.assert_awaited_once()
+        legacy.assert_not_awaited()
 
 
 if __name__ == "__main__":

@@ -446,6 +446,19 @@ class MigrationState:
             )
             return result.rowcount == 1
 
+    def release(self, item_id: str) -> bool:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue SET status = 'pending', error = NULL
+                    WHERE id = :id AND status = 'processing'
+                    """
+                ),
+                {"id": item_id},
+            )
+            return result.rowcount == 1
+
     def recover_interrupted(self) -> None:
         with self._engine.begin() as connection:
             connection.execute(

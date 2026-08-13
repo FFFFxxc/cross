@@ -7,7 +7,9 @@ import sys
 from .config import (
     ConfigError,
     STATE_FILE,
+    Targets,
     configure_credentials,
+    load_automation_config,
     load_credentials,
     load_targets,
     save_targets,
@@ -95,6 +97,20 @@ async def _run_connected(args) -> None:
             print(session_to_string(client))
             return
 
+        if args.command == "watch":
+            automation_config = load_automation_config()
+            targets = (
+                Targets(
+                    automation_config.initial_source,
+                    automation_config.destination,
+                )
+                if automation_config.enabled
+                else load_targets()
+            )
+            maybe_start_health_server()
+            await run_watcher(client, targets, automation_config)
+            return
+
         targets = load_targets()
         source = await client.get_entity(targets.source)
         destination = await client.get_entity(targets.destination)
@@ -107,11 +123,6 @@ async def _run_connected(args) -> None:
                 print("Источник и его история доступны.")
             print(f"Источник: {_chat_name(source)}")
             print(f"Назначение: {_chat_name(destination)}")
-            return
-
-        if args.command == "watch":
-            maybe_start_health_server()
-            await run_watcher(client, targets)
             return
 
         iterator = client.iter_messages(source)

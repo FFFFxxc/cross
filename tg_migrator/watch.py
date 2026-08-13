@@ -7,8 +7,17 @@ from dataclasses import dataclass
 from telethon import events
 from telethon.errors.common import InvalidBufferError
 
-from .config import STATE_FILE, Targets
+from .automation import AutomationController, HELP as AUTOMATION_HELP
+from .config import (
+    STATE_FILE,
+    AutomationConfig,
+    ConfigError,
+    Targets,
+    load_automation_config,
+)
+from .max_client import MaxClient, MaxConfig
 from .migrator import Progress, TransferMode, migrate_posts
+from .publisher import PostPublisher
 from .selection import (
     latest_posts,
     parse_start_date,
@@ -66,7 +75,7 @@ async def maintain_connection(client, sleep=asyncio.sleep) -> None:
             retry_delay = min(retry_delay * 2, 300)
 
 
-async def run_watcher(client, targets: Targets) -> None:
+async def _run_legacy_watcher(client, targets: Targets) -> None:
     state = MigrationState(STATE_FILE)
     active_task: asyncio.Task | None = None
     cancel_event: asyncio.Event | None = None
@@ -259,3 +268,86 @@ async def run_watcher(client, targets: Targets) -> None:
                 cancel_event.set()
             await active_task
         state.close()
+
+
+async def _run_automation_watcher(
+    client,
+    targets: Targets,
+    config: AutomationConfig,
+) -> None:
+    if not config.max_token:
+        raise ConfigError(
+            "Для автоматизации задайте MAX_BOT_TOKEN. "
+            "До этого оставьте TG_AUTOMATION_ENABLED=false."
+        )
+    state = MigrationState(STATE_FILE, config.database_url)
+    max_client = MaxClient(
+        MaxConfig(
+            token=config.max_token,
+            channel=config.max_channel,
+            api_base=config.max_api_base,
+        )
+    )
+    publisher = PostPublisher(
+        client,
+        state,
+        config.destination,
+        max_client,
+        default_signature=(config.signature_text, config.signature_url),
+    )
+    controller = AutomationController(client, state, publisher, config)
+    tasks: list[asyncio.Task] = []
+    try:
+        await controller.initialize()
+
+        @client.on(events.NewMessage())
+        async def automation_message_handler(event) -> None:
+            if controller.is_authorized(event):
+                handled = await controller.handle_command(
+                    event,
+                    (event.raw_text or "").strip(),
+                )
+                if handled:
+                    return
+            if getattr(event.message, "grouped_id", None) is not None:
+                return
+            await controller.handle_new_post(
+                [event.message],
+                chat_id=getattr(event, "chat_id", None),
+            )
+
+        @client.on(events.Album())
+        async def automation_album_handler(event) -> None:
+            await controller.handle_new_post(
+                event.messages,
+                chat_id=getattr(event, "chat_id", None),
+            )
+
+        tasks = [
+            asyncio.create_task(controller.refill_loop(), name="queue-refill"),
+            asyncio.create_task(controller.scheduler(), name="schedule"),
+        ]
+        await controller.notify(
+            "Desiree запущена: очередь и расписание включены.\n\n"
+            + AUTOMATION_HELP
+        )
+        await maintain_connection(client)
+    finally:
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        await max_client.aclose()
+        state.close()
+
+
+async def run_watcher(
+    client,
+    targets: Targets,
+    automation_config: AutomationConfig | None = None,
+) -> None:
+    config = automation_config or load_automation_config()
+    if config.enabled:
+        await _run_automation_watcher(client, targets, config)
+    else:
+        await _run_legacy_watcher(client, targets)

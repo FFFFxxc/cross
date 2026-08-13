@@ -98,6 +98,9 @@ class StateTests(unittest.TestCase):
 
             self.assertIsNone(state.claim("any"))
             self.assertTrue(state.retry(item.id))
+            claimed = state.claim("image")
+            self.assertEqual(claimed.id, item.id)
+            self.assertTrue(state.release(item.id))
             self.assertEqual(state.claim("image").id, item.id)
             state.close()
 
