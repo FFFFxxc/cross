@@ -1,0 +1,189 @@
+from __future__ import annotations
+
+import asyncio
+import mimetypes
+import ssl
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Awaitable, Callable
+from urllib.parse import quote
+
+import certifi
+import httpx
+
+
+@dataclass(frozen=True)
+class MaxConfig:
+    token: str
+    channel: str
+    api_base: str = "https://platform-api2.max.ru"
+    notify: bool = True
+    disable_link_preview: bool = False
+
+
+@dataclass(frozen=True)
+class MaxAttachment:
+    type: str
+    payload: dict
+
+    def as_dict(self) -> dict:
+        return {"type": self.type, "payload": self.payload}
+
+
+class MaxApiError(RuntimeError):
+    def __init__(self, message: str, status: int | None = None, code=None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+
+
+class AmbiguousMaxSendError(RuntimeError):
+    """MAX may have accepted the message; automatic retry could duplicate it."""
+
+
+Sleep = Callable[[float], Awaitable[None]]
+
+
+def _ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=certifi.where())
+    certificate = Path(__file__).resolve().parent.parent / "certs" / "russian-trusted-root-ca.pem"
+    context.load_verify_locations(cafile=str(certificate))
+    return context
+
+
+class MaxClient:
+    def __init__(
+        self,
+        config: MaxConfig,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Sleep = asyncio.sleep,
+    ):
+        self.config = config
+        self._sleep = sleep
+        self._chat_id: int | None = None
+        self._client = httpx.AsyncClient(
+            transport=transport,
+            verify=_ssl_context(),
+            timeout=httpx.Timeout(90.0, connect=20.0),
+            headers={"Authorization": config.token},
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    @staticmethod
+    async def _json(response: httpx.Response) -> dict:
+        try:
+            value = response.json()
+        except ValueError:
+            value = {"message": response.text[:300]}
+        return value if isinstance(value, dict) else {"value": value}
+
+    async def _api(self, method: str, path: str, **kwargs) -> dict:
+        url = f"{self.config.api_base.rstrip('/')}{path}"
+        try:
+            response = await self._client.request(method, url, **kwargs)
+        except httpx.RequestError as exc:
+            raise MaxApiError(f"MAX недоступен: {exc.__class__.__name__}") from exc
+        data = await self._json(response)
+        if response.is_error or data.get("success") is False:
+            raise MaxApiError(
+                str(data.get("message") or data.get("error") or f"HTTP {response.status_code}"),
+                response.status_code,
+                data.get("code"),
+            )
+        return data
+
+    async def resolve_channel(self) -> int:
+        if self._chat_id is not None:
+            return self._chat_id
+        if self.config.channel.lstrip("-").isdigit():
+            self._chat_id = int(self.config.channel)
+            return self._chat_id
+        data = await self._api("GET", f"/chats/{quote(self.config.channel, safe='')}")
+        chat_id = data.get("chat_id")
+        if chat_id is None:
+            raise MaxApiError("MAX не вернул chat_id публичного канала")
+        self._chat_id = int(chat_id)
+        return self._chat_id
+
+    async def upload(self, path: Path, media_type: str) -> MaxAttachment:
+        slot = await self._api("POST", "/uploads", params={"type": media_type})
+        upload_url = slot.get("url")
+        if not upload_url:
+            raise MaxApiError("MAX не вернул URL загрузки")
+        mime_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        try:
+            with path.open("rb") as stream:
+                response = await self._client.post(
+                    str(upload_url),
+                    files={"data": (path.name, stream, mime_type)},
+                )
+        except httpx.RequestError as exc:
+            raise MaxApiError(f"Не удалось загрузить файл в MAX: {exc}") from exc
+        uploaded = await self._json(response)
+        if response.is_error:
+            raise MaxApiError(
+                str(uploaded.get("message") or f"MAX upload HTTP {response.status_code}"),
+                response.status_code,
+                uploaded.get("code"),
+            )
+        if media_type == "image" and uploaded.get("photos"):
+            return MaxAttachment("image", {"photos": uploaded["photos"]})
+        token = (
+            uploaded.get("token")
+            or (uploaded.get("payload") or {}).get("token")
+            or (uploaded.get("retval") or {}).get("token")
+            or slot.get("token")
+        )
+        if not token:
+            raise MaxApiError("MAX не вернул токен загруженного файла")
+        return MaxAttachment(media_type, {"token": token})
+
+    async def send(self, text_html: str, attachments: list[MaxAttachment]) -> str:
+        chat_id = await self.resolve_channel()
+        payload = {
+            "text": text_html or None,
+            "attachments": [attachment.as_dict() for attachment in attachments] or None,
+            "notify": self.config.notify,
+            "format": "html",
+        }
+        params = {
+            "chat_id": str(chat_id),
+            "disable_link_preview": str(self.config.disable_link_preview).lower(),
+        }
+        last_error: MaxApiError | None = None
+        for delay in (0, 1, 2, 4, 8):
+            if delay:
+                await self._sleep(delay)
+            try:
+                response = await self._client.post(
+                    f"{self.config.api_base.rstrip('/')}/messages",
+                    params=params,
+                    json=payload,
+                )
+            except httpx.RequestError as exc:
+                raise AmbiguousMaxSendError(
+                    "Соединение оборвалось во время отправки в MAX"
+                ) from exc
+            data = await self._json(response)
+            if response.is_error or data.get("success") is False:
+                last_error = MaxApiError(
+                    str(data.get("message") or data.get("error") or f"HTTP {response.status_code}"),
+                    response.status_code,
+                    data.get("code"),
+                )
+                if last_error.code == "attachment.not.ready":
+                    continue
+                raise last_error
+            message = data.get("message") or {}
+            body = message.get("body") or {}
+            mid = body.get("mid") or message.get("id") or data.get("message_id")
+            if mid is None:
+                raise AmbiguousMaxSendError(
+                    "MAX принял запрос, но не вернул идентификатор сообщения"
+                )
+            return str(mid)
+        assert last_error is not None
+        raise last_error
