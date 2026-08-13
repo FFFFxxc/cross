@@ -66,7 +66,6 @@ class MaxClient:
             transport=transport,
             verify=_ssl_context(),
             timeout=httpx.Timeout(90.0, connect=20.0),
-            headers={"Authorization": config.token},
         )
 
     async def aclose(self) -> None:
@@ -82,8 +81,14 @@ class MaxClient:
 
     async def _api(self, method: str, path: str, **kwargs) -> dict:
         url = f"{self.config.api_base.rstrip('/')}{path}"
+        headers = {"Authorization": self.config.token, **kwargs.pop("headers", {})}
         try:
-            response = await self._client.request(method, url, **kwargs)
+            response = await self._client.request(
+                method,
+                url,
+                headers=headers,
+                **kwargs,
+            )
         except httpx.RequestError as exc:
             raise MaxApiError(f"MAX недоступен: {exc.__class__.__name__}") from exc
         data = await self._json(response)
@@ -162,6 +167,7 @@ class MaxClient:
                     f"{self.config.api_base.rstrip('/')}/messages",
                     params=params,
                     json=payload,
+                    headers={"Authorization": self.config.token},
                 )
             except httpx.RequestError as exc:
                 raise AmbiguousMaxSendError(

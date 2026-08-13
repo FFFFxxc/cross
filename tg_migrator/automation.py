@@ -17,6 +17,7 @@ from .selection import (
     parse_start_date,
     post_activity,
     post_from_messages,
+    post_fingerprint,
     post_media_kind,
     posts_from_date,
 )
@@ -100,8 +101,11 @@ class AutomationController:
                 try:
                     entity = await self.client.get_entity(source.peer)
                 except Exception:
+                    entity = await self._entity_from_dialogs(source.peer)
+                if entity is None:
                     continue
                 self._chat_sources[_entity_peer_id(entity)] = source.peer
+        await self.import_target_history()
         if not self.state.slots():
             for slot in DEFAULT_SLOTS:
                 self.state.set_slot(slot)
@@ -109,6 +113,29 @@ class AutomationController:
             self.state.set_setting("signature_text", self.config.signature_text)
         if self.state.get_setting("signature_url") is None:
             self.state.set_setting("signature_url", self.config.signature_url)
+
+    async def _entity_from_dialogs(self, peer: str):
+        """Restore private-channel entities that a StringSession does not cache."""
+        try:
+            peer_id = int(peer)
+            dialogs = await self.client.get_dialogs()
+        except (AttributeError, TypeError, ValueError):
+            return None
+        for dialog in dialogs:
+            entity = getattr(dialog, "entity", dialog)
+            if _entity_peer_id(entity) == peer_id:
+                return entity
+        return None
+
+    async def import_target_history(self) -> int:
+        posts = await latest_posts(
+            self.client.iter_messages(
+                self.config.destination,
+                limit=self.config.target_scan_limit,
+            ),
+            self.config.target_scan_limit,
+        )
+        return self.state.mark_fingerprints(post_fingerprint(post) for post in posts)
 
     def is_authorized(self, event) -> bool:
         if not getattr(event, "is_private", False):
@@ -183,6 +210,7 @@ class AutomationController:
                 post_media_kind(post),
                 post_activity(post),
                 post.published_at,
+                fingerprint=post_fingerprint(post),
             )
             if item is not None:
                 added += 1
@@ -196,12 +224,15 @@ class AutomationController:
         source: str | None = None,
         *,
         required_kind: str = "any",
+        scan_count: int | None = None,
     ) -> int:
         if count <= 0:
             raise ValueError("Количество должно быть больше нуля.")
         total = 0
         for peer in self._selected_sources(source):
-            read_count = self.config.scan_limit if required_kind != "any" else count
+            read_count = scan_count or (
+                self.config.scan_limit if required_kind != "any" else count
+            )
             posts = await latest_posts(
                 self.client.iter_messages(peer, limit=read_count),
                 read_count,
@@ -245,7 +276,12 @@ class AutomationController:
         if not force and pending >= self.config.queue_minimum:
             return 0
         wanted = self.config.scan_limit if force else self.config.queue_minimum - pending
-        return await self.parse_latest(wanted, source, required_kind=required_kind)
+        return await self.parse_latest(
+            wanted,
+            source,
+            required_kind=required_kind,
+            scan_count=self.config.scan_limit,
+        )
 
     async def publish_next(
         self,
@@ -280,9 +316,13 @@ class AutomationController:
 
     async def run_due(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(self.timezone)
-        run_time = current.strftime("%H:%M")
-        slot = next((value for value in self.state.slots() if value.time == run_time), None)
-        if slot is None:
+        current_time = current.strftime("%H:%M")
+        due = [slot for slot in self.state.slots() if slot.time <= current_time]
+        if not due:
+            return False
+        slot = max(due, key=lambda value: value.time)
+        run_time = slot.time
+        if not self.state.claim_slot(current.date(), run_time):
             return False
         item = self.state.claim(slot.kind, slot.source)
         if item is None:
@@ -290,9 +330,6 @@ class AutomationController:
             item = self.state.claim(slot.kind, slot.source)
         if item is None:
             await self.notify(f"Слот {run_time}: подходящего поста нет.")
-            return False
-        if not self.state.claim_slot(current.date(), run_time):
-            self.state.release(item.id)
             return False
         try:
             await self.publisher.publish(item)

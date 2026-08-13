@@ -119,6 +119,12 @@ class MigrationState:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS automation_fingerprints (
+                fingerprint TEXT PRIMARY KEY,
+                added_at TEXT NOT NULL
+            )
+            """,
+            """
             CREATE INDEX IF NOT EXISTS automation_queue_claim
             ON automation_queue (status, media_kind, score, published_at)
             """,
@@ -294,6 +300,7 @@ class MigrationState:
         media_kind: str,
         score: int,
         published_at: datetime,
+        fingerprint: str | None = None,
     ) -> QueueItem | None:
         item_id = uuid.uuid4().hex[:12]
         params = {
@@ -308,6 +315,19 @@ class MigrationState:
             "created_at": _utcnow(),
         }
         with self._engine.begin() as connection:
+            if fingerprint:
+                fingerprint_result = connection.execute(
+                    text(
+                        """
+                        INSERT INTO automation_fingerprints (fingerprint, added_at)
+                        VALUES (:fingerprint, :added_at)
+                        ON CONFLICT (fingerprint) DO NOTHING
+                        """
+                    ),
+                    {"fingerprint": fingerprint, "added_at": _utcnow()},
+                )
+                if fingerprint_result.rowcount != 1:
+                    return None
             result = connection.execute(
                 text(
                     """
@@ -326,6 +346,30 @@ class MigrationState:
             if result.rowcount != 1:
                 return None
         return self.queue_item(item_id)
+
+    def mark_fingerprints(self, fingerprints: Iterable[str]) -> int:
+        rows = [
+            {"fingerprint": value, "added_at": _utcnow()}
+            for value in dict.fromkeys(fingerprints)
+            if value
+        ]
+        if not rows:
+            return 0
+        added = 0
+        with self._engine.begin() as connection:
+            for row in rows:
+                result = connection.execute(
+                    text(
+                        """
+                        INSERT INTO automation_fingerprints (fingerprint, added_at)
+                        VALUES (:fingerprint, :added_at)
+                        ON CONFLICT (fingerprint) DO NOTHING
+                        """
+                    ),
+                    row,
+                )
+                added += int(result.rowcount == 1)
+        return added
 
     @staticmethod
     def _queue_item(row: RowMapping | None) -> QueueItem | None:

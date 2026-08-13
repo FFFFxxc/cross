@@ -50,6 +50,7 @@ class AutomationConfig:
     refill_interval: int
     scan_limit: int
     fresh_days: int
+    target_scan_limit: int
 
 
 def _ensure_data_dir() -> None:
@@ -136,6 +137,7 @@ def load_automation_config() -> AutomationConfig:
         refill_interval=_positive_int(os.getenv("TG_REFILL_INTERVAL"), 900),
         scan_limit=_positive_int(os.getenv("TG_SCAN_LIMIT"), 120),
         fresh_days=_positive_int(os.getenv("TG_FRESH_DAYS"), 30),
+        target_scan_limit=_positive_int(os.getenv("TG_TARGET_SCAN_LIMIT"), 1000),
     )
 
 

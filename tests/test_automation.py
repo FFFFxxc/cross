@@ -25,6 +25,7 @@ def config(**overrides):
         "refill_interval": 900,
         "scan_limit": 10,
         "fresh_days": 30,
+        "target_scan_limit": 1000,
     }
     values.update(overrides)
     return AutomationConfig(**values)
@@ -34,14 +35,18 @@ def message(message_id, *, chat_id=-100, video=True, views=0):
     return SimpleNamespace(
         id=message_id,
         chat_id=chat_id,
-        date=datetime(2026, 8, 13, 12 + message_id, tzinfo=timezone.utc),
+        date=datetime(2026, 8, 13, 12 + message_id % 10, tzinfo=timezone.utc),
         raw_text=f"post {message_id}",
         message=f"post {message_id}",
         entities=[],
         media=object() if video else None,
         video=object() if video else None,
         photo=None,
-        document=SimpleNamespace(mime_type="video/mp4") if video else None,
+        document=(
+            SimpleNamespace(mime_type="video/mp4", id=message_id)
+            if video
+            else None
+        ),
         grouped_id=None,
         action=None,
         views=views,
@@ -95,6 +100,9 @@ class FakeClient:
     async def get_entity(self, peer):
         name = str(peer).replace("@", "")
         return SimpleNamespace(id=-100 if name == "animeworldmem" else -200, username=name, title=name)
+
+    async def get_dialogs(self):
+        return []
 
     def iter_messages(self, source, limit=None):
         values = list(self.posts.get(str(source), ()))[:limit]
@@ -164,6 +172,25 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("уже", event.responses[-1].lower())
 
+    async def test_private_source_is_restored_from_dialogs_after_restart(self):
+        class PrivateClient(FakeClient):
+            async def get_entity(self, peer):
+                if str(peer) == "-777":
+                    raise ValueError("entity cache is empty")
+                return await super().get_entity(peer)
+
+            async def get_dialogs(self):
+                entity = SimpleNamespace(id=-777, username=None, title="private")
+                return [SimpleNamespace(entity=entity)]
+
+        self.state.add_source("-777", "private")
+        controller, _ = await self.controller(PrivateClient())
+
+        self.assertTrue(
+            await controller.handle_new_post([message(7, chat_id=-777)], chat_id=-777)
+        )
+        self.assertEqual(self.state.pending_count(), 1)
+
     async def test_parse_fills_queue_without_duplicates(self):
         client = FakeClient({"animeworldmem": [message(3), message(2), message(1)]})
         controller, _ = await self.controller(client)
@@ -201,7 +228,7 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             datetime.now(timezone.utc),
         )
 
-        now = datetime(2026, 8, 14, 14, 0, tzinfo=controller.timezone)
+        now = datetime(2026, 8, 14, 14, 5, tzinfo=controller.timezone)
         await controller.run_due(now)
         await controller.run_due(now)
 
@@ -219,6 +246,31 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(added, 2)
         self.assertEqual(self.state.pending_count(), 2)
 
+    async def test_refill_scans_past_already_published_latest_posts(self):
+        client = FakeClient(
+            {"animeworldmem": [message(5), message(4), message(3), message(2), message(1)]}
+        )
+        controller, _ = await self.controller(client, queue_minimum=2, scan_limit=5)
+        await controller.parse_latest(2)
+        for _ in range(2):
+            item = self.state.claim("any")
+            self.state.complete(item.id, f"old-{item.id}")
+
+        added = await controller.refill()
+
+        self.assertEqual(added, 2)
+        self.assertEqual(self.state.pending_count(), 2)
+
+    async def test_empty_slot_is_recorded_once_instead_of_spamming(self):
+        client = FakeClient()
+        controller, _ = await self.controller(client)
+        now = datetime(2026, 8, 14, 14, 0, tzinfo=controller.timezone)
+
+        await controller.run_due(now)
+        await controller.run_due(now)
+
+        self.assertEqual(len(client.sent), 2)
+
     async def test_new_source_post_is_enqueued_once(self):
         controller, _ = await self.controller()
         post = message(1, chat_id=-100)
@@ -226,6 +278,24 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await controller.handle_new_post([post], chat_id=-100))
         self.assertFalse(await controller.handle_new_post([post], chat_id=-100))
         self.assertEqual(self.state.pending_count(), 1)
+
+    async def test_target_history_prevents_first_neon_queue_duplicates(self):
+        already_published = message(90)
+        already_published.document.id = 777
+        source_copy = message(1)
+        source_copy.document.id = 777
+        client = FakeClient(
+            {
+                "webnmy": [already_published],
+                "animeworldmem": [source_copy],
+            }
+        )
+        controller, _ = await self.controller(client)
+
+        added = await controller.parse_latest(1)
+
+        self.assertEqual(added, 0)
+        self.assertEqual(self.state.pending_count(), 0)
 
     async def test_now_publishes_without_consuming_schedule_slot(self):
         controller, publisher = await self.controller()

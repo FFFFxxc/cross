@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from telethon.tl.types import MessageEntityBold, MessageEntityItalic
 
 from tg_migrator.max_client import AmbiguousMaxSendError, MaxAttachment
-from tg_migrator.publisher import PostPublisher, telegram_entities_to_max_html
+from tg_migrator.publisher import PostPublisher, _split_text, telegram_entities_to_max_html
 from tg_migrator.state import MigrationState
 
 
@@ -78,8 +78,71 @@ class PublisherFormattingTests(unittest.TestCase):
 
         self.assertEqual(html, "🙂 <b>Жирный</b> &amp; <i>курсив</i>")
 
+    def test_keeps_formatting_when_entity_crosses_max_chunk_boundary(self):
+        text = "А" * 3500
+        chunks = _split_text(text, [MessageEntityBold(offset=0, length=3500)])
+
+        rendered = [telegram_entities_to_max_html(value, entities) for value, entities in chunks]
+
+        self.assertEqual(len(rendered), 2)
+        self.assertTrue(all(value.startswith("<b>") and value.endswith("</b>") for value in rendered))
+        self.assertEqual("".join(value[3:-4] for value in rendered), text)
+
 
 class PublisherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_clean_copy_is_edited_to_drop_source_buttons_too(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:1", (1,), "video", 1,
+                datetime.now(timezone.utc),
+            )
+            item = state.claim("video")
+            source = video_message()
+            source.raw_text = source.message = "Обычный пост"
+            source.entities = []
+            source.reply_markup = object()
+            telegram = FakeTelegramClient({1: source})
+            publisher = PostPublisher(
+                telegram,
+                state,
+                "webnmy",
+                FakeMaxClient(),
+                default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+            )
+
+            await publisher.publish(item)
+
+            self.assertEqual(telegram.edited[0][2]["text"], "Обычный пост")
+            self.assertIsNone(telegram.edited[0][2]["buttons"])
+            state.close()
+
+    async def test_clean_copy_without_buttons_is_not_needlessly_edited(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:1", (1,), "video", 1,
+                datetime.now(timezone.utc),
+            )
+            item = state.claim("video")
+            source = video_message()
+            source.raw_text = source.message = "Обычный пост"
+            source.entities = []
+            source.reply_markup = None
+            telegram = FakeTelegramClient({1: source})
+            publisher = PostPublisher(
+                telegram,
+                state,
+                "webnmy",
+                FakeMaxClient(),
+                default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+            )
+
+            await publisher.publish(item)
+
+            self.assertEqual(telegram.edited, [])
+            state.close()
+
     async def test_publishes_clean_telegram_copy_then_large_video_to_max(self):
         with tempfile.TemporaryDirectory() as directory:
             state = MigrationState(Path(directory) / "state.sqlite3")
@@ -108,6 +171,7 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(telegram.forwarded[0][0], "webnmy")
             self.assertEqual(telegram.edited[0][2]["text"], "Жирный пост")
             self.assertEqual(len(telegram.edited[0][2]["formatting_entities"]), 1)
+            self.assertIsNone(telegram.edited[0][2]["buttons"])
             self.assertEqual(telegram.downloaded[0][0], 1)
             self.assertEqual(max_client.uploads[0][1], "video")
             self.assertFalse(max_client.uploads[0][0].exists())
@@ -169,6 +233,63 @@ class PublisherTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state.queue_item(item.id).status, "ambiguous")
             self.assertIsNone(state.claim("any"))
             state.close()
+
+    async def test_long_text_is_split_without_losing_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:1", (1,), "any", 1,
+                datetime.now(timezone.utc),
+            )
+            item = state.claim("any")
+            source = video_message()
+            source.media = source.video = source.document = source.file = None
+            source.raw_text = source.message = "А" * 3500
+            source.entities = []
+            max_client = FakeMaxClient()
+            publisher = PostPublisher(
+                FakeTelegramClient({1: source}),
+                state,
+                "webnmy",
+                max_client,
+                default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+            )
+
+            await publisher.publish(item)
+
+            self.assertEqual(len(max_client.sends), 2)
+            visible = max_client.sends[0][0] + max_client.sends[1][0].split("\n\n", 1)[0]
+            self.assertEqual(visible, "А" * 3500)
+            self.assertEqual(len(max_client.sends[0][1]), 0)
+            self.assertIn("НАШ ТГК", max_client.sends[1][0])
+
+    async def test_webpage_preview_is_not_uploaded_as_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:1", (1,), "any", 1,
+                datetime.now(timezone.utc),
+            )
+            item = state.claim("any")
+            source = video_message()
+            source.video = source.document = source.file = None
+            source.media = SimpleNamespace(webpage=object())
+            source.raw_text = source.message = "Обычный текст"
+            source.entities = []
+            telegram = FakeTelegramClient({1: source})
+            max_client = FakeMaxClient()
+            publisher = PostPublisher(
+                telegram,
+                state,
+                "webnmy",
+                max_client,
+                default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+            )
+
+            await publisher.publish(item)
+
+            self.assertEqual(telegram.downloaded, [])
+            self.assertEqual(max_client.uploads, [])
 
 
 if __name__ == "__main__":

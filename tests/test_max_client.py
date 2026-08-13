@@ -41,6 +41,7 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
                     json={"url": "https://upload.test/video", "token": "video-token"},
                 )
             self.assertEqual(str(request.url), "https://upload.test/video")
+            self.assertNotIn("authorization", request.headers)
             body = await request.aread()
             self.assertIn(b"large-video-content", body)
             self.assertIn("multipart/form-data", request.headers["content-type"])

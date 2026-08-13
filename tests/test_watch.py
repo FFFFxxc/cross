@@ -60,6 +60,7 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
             refill_interval=900,
             scan_limit=120,
             fresh_days=30,
+            target_scan_limit=1000,
         )
 
     async def test_disabled_config_preserves_legacy_watcher(self):

@@ -82,6 +82,22 @@ class StateTests(unittest.TestCase):
             self.assertEqual(state.queue_counts(), {"published": 1})
             state.close()
 
+    def test_queue_deduplicates_same_media_fingerprint_across_sources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            published = datetime.now(timezone.utc)
+            first = state.enqueue(
+                "source-a", "message:1", (1,), "video", 1, published,
+                fingerprint="media:777",
+            )
+            second = state.enqueue(
+                "source-b", "message:99", (99,), "video", 2, published,
+                fingerprint="media:777",
+            )
+            self.assertIsNotNone(first)
+            self.assertIsNone(second)
+            state.close()
+
     def test_ambiguous_items_require_manual_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             state = MigrationState(Path(directory) / "state.sqlite3")

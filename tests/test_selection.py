@@ -7,6 +7,7 @@ from tg_migrator.selection import (
     latest_posts,
     parse_start_date,
     post_activity,
+    post_fingerprint,
     post_media_kind,
     posts_from_date,
     sanitize_message_text,
@@ -217,6 +218,17 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(post_activity(post), 139)
+
+    def test_media_fingerprint_is_stable_across_message_ids_and_captions(self):
+        first = message(1, 1, text="первая подпись", media=object(), video=object())
+        second = message(9, 2, text="другая подпись", media=object(), video=object())
+        first.document = SimpleNamespace(id=777, mime_type="video/mp4")
+        second.document = SimpleNamespace(id=777, mime_type="video/mp4")
+
+        self.assertEqual(
+            post_fingerprint(Post("message:1", (first,))),
+            post_fingerprint(Post("message:9", (second,))),
+        )
 
 
 if __name__ == "__main__":

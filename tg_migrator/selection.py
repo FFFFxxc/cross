@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
+import hashlib
 import re
 from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
@@ -298,3 +299,34 @@ def post_activity(post: Post) -> int:
         reactions = getattr(getattr(message, "reactions", None), "results", None) or ()
         score += 5 * sum(int(getattr(reaction, "count", 0) or 0) for reaction in reactions)
     return score
+
+
+def post_fingerprint(post: Post) -> str:
+    media: list[str] = []
+    texts: list[str] = []
+    for message in post.messages:
+        document_id = getattr(getattr(message, "document", None), "id", None)
+        photo_id = getattr(getattr(message, "photo", None), "id", None)
+        if document_id is not None:
+            media.append(f"document:{document_id}")
+        elif photo_id is not None:
+            media.append(f"photo:{photo_id}")
+        raw_text = (
+            getattr(message, "raw_text", None)
+            or getattr(message, "message", None)
+            or ""
+        )
+        cleaned, _ = sanitize_message_text(
+            raw_text,
+            list(getattr(message, "entities", None) or []),
+        )
+        if cleaned:
+            texts.append(cleaned)
+    if media:
+        payload = "|".join(sorted(media))
+        prefix = "media"
+    else:
+        payload = "\n".join(texts).strip()
+        prefix = "text"
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return f"{prefix}:{digest}"

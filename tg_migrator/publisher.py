@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+from copy import copy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -87,6 +88,40 @@ def _message_text(message) -> tuple[str, list]:
     )
 
 
+def _utf16_len(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
+
+
+def _split_text(text: str, entities: list, limit: int = 2800) -> list[tuple[str, list]]:
+    if not text:
+        return [("", [])]
+    chunks: list[tuple[str, list]] = []
+    start = 0
+    while start < len(text):
+        end = min(start + limit, len(text))
+        if end < len(text):
+            candidate = text[start:end]
+            natural = max(candidate.rfind("\n"), candidate.rfind(" "))
+            if natural >= limit // 2:
+                end = start + natural + 1
+        start_u16 = _utf16_len(text[:start])
+        end_u16 = _utf16_len(text[:end])
+        adjusted = []
+        for entity in entities:
+            entity_start = int(getattr(entity, "offset", 0))
+            entity_end = entity_start + int(getattr(entity, "length", 0))
+            overlap_start = max(entity_start, start_u16)
+            overlap_end = min(entity_end, end_u16)
+            if overlap_start < overlap_end:
+                clone = copy(entity)
+                clone.offset = overlap_start - start_u16
+                clone.length = overlap_end - overlap_start
+                adjusted.append(clone)
+        chunks.append((text[start:end], adjusted))
+        start = end
+    return chunks
+
+
 def _media_type(message) -> str:
     document = getattr(message, "document", None)
     mime_type = (getattr(document, "mime_type", None) or "").lower()
@@ -101,6 +136,13 @@ def _media_type(message) -> str:
     if getattr(message, "audio", None) is not None or mime_type.startswith("audio/"):
         return "audio"
     return "file"
+
+
+def _downloadable(message) -> bool:
+    return any(
+        getattr(message, name, None) is not None
+        for name in ("file", "document", "photo", "video", "gif", "audio", "voice")
+    )
 
 
 def _media_suffix(message, media_type: str) -> str:
@@ -158,26 +200,30 @@ class PostPublisher:
                 or ""
             )
             cleaned, entities = _message_text(source_message)
-            if cleaned != original:
+            has_buttons = bool(
+                getattr(source_message, "reply_markup", None)
+                or getattr(source_message, "buttons", None)
+            )
+            if cleaned != original or has_buttons:
                 await self.client.edit_message(
                     self.destination,
                     sent_message,
                     text=cleaned,
                     formatting_entities=entities,
                     link_preview=False,
+                    buttons=None,
                 )
         ids = tuple(int(message.id) for message in sent)
         self.state.save_telegram_delivery(item.id, ids)
         return ids
 
-    def _max_text(self, messages: list) -> str:
+    def _max_text_chunks(self, messages: list) -> list[str]:
         cleaned_text = ""
         entities: list = []
         for message in messages:
             cleaned_text, entities = _message_text(message)
             if cleaned_text:
                 break
-        body = telegram_entities_to_max_html(cleaned_text, entities)
         signature_text = self.state.get_setting(
             "signature_text",
             self.default_signature[0],
@@ -187,13 +233,21 @@ class PostPublisher:
             self.default_signature[1],
         ) or self.default_signature[1]
         signature = _signature_html(signature_text, signature_url)
-        return f"{body}\n\n{signature}" if body else signature
+        chunks = [
+            telegram_entities_to_max_html(text, chunk_entities)
+            for text, chunk_entities in _split_text(cleaned_text, entities)
+        ]
+        if chunks[-1]:
+            chunks[-1] = f"{chunks[-1]}\n\n{signature}"
+        else:
+            chunks[-1] = signature
+        return chunks
 
     async def _max_stage(self, messages: list) -> str:
         attachments: list[MaxAttachment] = []
         with TemporaryDirectory(prefix="desiree-max-") as directory:
             for message in messages:
-                if getattr(message, "media", None) is None:
+                if getattr(message, "media", None) is None or not _downloadable(message):
                     continue
                 media_type = _media_type(message)
                 path = Path(directory) / f"telegram-{message.id}{_media_suffix(message, media_type)}"
@@ -201,7 +255,15 @@ class PostPublisher:
                 if not downloaded:
                     raise RuntimeError(f"Telegram не скачал вложение #{message.id}")
                 attachments.append(await self.max_client.upload(Path(downloaded), media_type))
-            return await self.max_client.send(self._max_text(messages), attachments)
+            mids = []
+            for index, chunk in enumerate(self._max_text_chunks(messages)):
+                mids.append(
+                    await self.max_client.send(
+                        chunk,
+                        attachments if index == 0 else [],
+                    )
+                )
+            return ",".join(mids)
 
     async def publish(self, item: QueueItem) -> PublishResult:
         if item.status != "processing":
