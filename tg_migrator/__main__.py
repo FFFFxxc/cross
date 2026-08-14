@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import sys
 
 from .config import (
     ConfigError,
+    Credentials,
     STATE_FILE,
     Targets,
     configure_credentials,
@@ -17,6 +19,7 @@ from .config import (
 from .health import maybe_start_health_server
 from .migrator import Progress, TransferMode, migrate_posts
 from .selection import latest_posts, parse_start_date, posts_from_date
+from .render_env import RenderEnvValues, build_render_env, copy_to_clipboard
 from .service import install_service, service_status, uninstall_service
 from .state import MigrationState
 from .telegram import authorize, build_client, session_to_string
@@ -35,6 +38,10 @@ def _parser() -> argparse.ArgumentParser:
     targets.add_argument("--destination", required=True)
 
     subparsers.add_parser("configure-secrets")
+    subparsers.add_parser(
+        "prepare-render",
+        help="Создать новую Telegram-сессию и скопировать env для Render.",
+    )
     subparsers.add_parser("auth")
     export = subparsers.add_parser(
         "export-session",
@@ -63,6 +70,46 @@ def _parser() -> argparse.ArgumentParser:
         )
         transfer.add_argument("--dry-run", action="store_true")
     return parser
+
+
+async def _prepare_render() -> None:
+    stored = load_credentials()
+    phone = getpass.getpass("Новый номер Telegram: ").strip()
+    database_url = getpass.getpass("Новая строка Neon DATABASE_URL: ").strip()
+    max_token = getpass.getpass("Токен MAX-бота: ").strip()
+    for key, value in (
+        ("TG_PHONE", phone),
+        ("DATABASE_URL", database_url),
+        ("MAX_BOT_TOKEN", max_token),
+    ):
+        if not value:
+            raise ConfigError(f"Обязательное значение {key} пусто.")
+    if not database_url.startswith(("postgresql://", "postgres://")):
+        raise ConfigError("DATABASE_URL должен быть строкой PostgreSQL из Neon.")
+
+    credentials = Credentials(stored.api_id, stored.api_hash, phone)
+    client = build_client(credentials, fresh_string_session=True)
+    await authorize(client, credentials)
+    try:
+        me = await client.get_me()
+        block = build_render_env(
+            RenderEnvValues(
+                api_id=str(credentials.api_id),
+                api_hash=credentials.api_hash,
+                phone=credentials.phone,
+                session=session_to_string(client),
+                database_url=database_url,
+                max_token=max_token,
+            )
+        )
+        copy_to_clipboard(block)
+    finally:
+        await client.disconnect()
+    print(
+        f"Готово: аккаунт {me.first_name} (id {me.id}). "
+        "Render env скопирован целиком. "
+        "Вставьте его через Add from .env; первый запуск безопасно выключен."
+    )
 
 
 def _chat_name(entity) -> str:
@@ -193,6 +240,9 @@ def main() -> None:
         if args.command == "configure-secrets":
             configure_credentials()
             print("Данные сохранены в защищённом хранилище macOS Keychain.")
+            return
+        if args.command == "prepare-render":
+            asyncio.run(_prepare_render())
             return
         if args.command == "install-service":
             install_service()
