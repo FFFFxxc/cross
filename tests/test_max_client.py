@@ -223,8 +223,12 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
             chat_ids.append(request.url.params["chat_id"])
             if len(chat_ids) == 1:
                 return httpx.Response(
-                    404,
-                    json={"code": "chat.not.found", "message": "Chat not found"},
+                    200,
+                    json={
+                        "success": False,
+                        "code": "chat.not.found",
+                        "message": "Chat not found",
+                    },
                 )
             return httpx.Response(
                 200,

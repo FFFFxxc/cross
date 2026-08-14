@@ -230,14 +230,14 @@ class MaxClient:
                 if last_error.code == "attachment.not.ready":
                     continue
                 if (
-                    400 <= response.status_code < 500
-                    and str(last_error).strip().lower() == "chat not found"
+                    str(last_error).strip().lower() == "chat not found"
                     and send_chat_id < 0
                     and not tried_positive_channel_id
                 ):
                     # MAX currently reports signed channel IDs in bot_added and
                     # GET /chats, while POST /messages may require its absolute
-                    # value. A definite 4xx means the first request was not sent.
+                    # value. This exact API error means the first request was
+                    # rejected, including when MAX wraps it in HTTP 200.
                     send_chat_id = abs(send_chat_id)
                     tried_positive_channel_id = True
                     continue
