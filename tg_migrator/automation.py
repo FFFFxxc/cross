@@ -531,8 +531,18 @@ class AutomationController:
                     self.state.set_setting("signature_url", parts[1])
                     await event.respond("Подпись MAX обновлена.")
             elif command == "max_status":
-                bot = await self.publisher.max_client.bot_info()
-                channels = await self.publisher.max_client.discover_channels()
+                bot_error = ""
+                try:
+                    bot = await self.publisher.max_client.bot_info()
+                except RuntimeError as exc:
+                    bot = {"user_id": 0, "name": "не определён", "username": ""}
+                    bot_error = str(exc)
+                channels_error = ""
+                try:
+                    channels = await self.publisher.max_client.discover_channels()
+                except RuntimeError as exc:
+                    channels = []
+                    channels_error = str(exc)
                 if channels:
                     username = (
                         f" (@{bot['username']}, ID {bot['user_id']})"
@@ -540,7 +550,9 @@ class AutomationController:
                         else f" (ID {bot['user_id']})"
                     )
                     await event.respond(
-                        f"MAX-бот Render: {bot['name']}{username}\n"
+                        f"MAX-бот Render: {bot['name']}{username}"
+                        + (f"\nMAX API бота: {bot_error}" if bot_error else "")
+                        + "\n"
                         "MAX-каналы:\n"
                         + "\n".join(
                             f"• {channel['title']} — {channel['chat_id']}\n"
@@ -558,6 +570,7 @@ class AutomationController:
                     await event.respond(
                         "MAX не вернул bot_added для активного канала. "
                         "Удалите и снова добавьте бота администратором."
+                        + (f"\nMAX API: {channels_error}" if channels_error else "")
                     )
             elif command == "retry":
                 if not arguments:

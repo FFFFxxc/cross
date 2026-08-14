@@ -76,6 +76,34 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(channels[0]["membership_error"], "Chat not found")
         self.assertIn("/chats/-77809668353385", requested)
 
+    async def test_reports_configured_channel_when_chat_is_not_visible_to_bot(self):
+        async def handler(request):
+            if request.url.path == "/updates":
+                return httpx.Response(
+                    200,
+                    json={"success": False, "message": "Chat not found"},
+                )
+            return httpx.Response(
+                200,
+                json={"success": False, "message": "Chat not found"},
+            )
+
+        client = MaxClient(
+            MaxConfig("token", "-77809668353385"),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            channels = await client.discover_channels()
+        finally:
+            await client.aclose()
+
+        self.assertEqual(len(channels), 1)
+        self.assertEqual(channels[0]["chat_id"], -77809668353385)
+        self.assertEqual(channels[0]["title"], "настроенный канал")
+        self.assertFalse(channels[0]["is_admin"])
+        self.assertFalse(channels[0]["can_write"])
+        self.assertIn("Chat not found", channels[0]["membership_error"])
+
     async def test_discovers_official_channel_id_from_bot_added_update(self):
         async def handler(request):
             if request.url.path == "/updates":

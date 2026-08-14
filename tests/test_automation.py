@@ -263,6 +263,34 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("админ: да", event.responses[-1])
         self.assertIn("публикация: да", event.responses[-1])
 
+    async def test_max_status_reports_bot_lookup_error_without_crashing(self):
+        controller, publisher = await self.controller()
+
+        async def discover_channels():
+            return [
+                {
+                    "chat_id": -77809668353385,
+                    "title": "настроенный канал",
+                    "link": "",
+                    "is_admin": False,
+                    "can_write": False,
+                    "permissions": [],
+                    "membership_error": "Chat not found",
+                }
+            ]
+
+        async def bot_info():
+            raise RuntimeError("Bot lookup failed")
+
+        publisher.max_client.discover_channels = discover_channels
+        publisher.max_client.bot_info = bot_info
+        event = Event("/max_status", outgoing=True, chat_id=8528395173)
+
+        self.assertTrue(await controller.handle_command(event, event.raw_text))
+        self.assertIn("MAX-бот Render: не определён", event.responses[-1])
+        self.assertIn("Bot lookup failed", event.responses[-1])
+        self.assertIn("-77809668353385", event.responses[-1])
+
     async def test_video_slot_claims_video_and_runs_only_once(self):
         controller, publisher = await self.controller()
         image = self.state.enqueue(

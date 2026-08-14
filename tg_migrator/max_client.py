@@ -123,11 +123,16 @@ class MaxClient:
 
     async def discover_channels(self) -> list[dict]:
         """Return official Bot API channel IDs seen in bot_added events."""
-        data = await self._api(
-            "GET",
-            "/updates",
-            params={"limit": "1000", "timeout": "0", "types": "bot_added"},
-        )
+        updates_error = ""
+        try:
+            data = await self._api(
+                "GET",
+                "/updates",
+                params={"limit": "1000", "timeout": "0", "types": "bot_added"},
+            )
+        except MaxApiError as exc:
+            data = {}
+            updates_error = str(exc)
         chat_ids = {
             int(update["chat_id"])
             for update in data.get("updates", [])
@@ -141,7 +146,24 @@ class MaxClient:
                 chat_ids.add(configured_chat_id)
         channels = []
         for chat_id in sorted(chat_ids):
-            chat = await self._api("GET", f"/chats/{chat_id}")
+            try:
+                chat = await self._api("GET", f"/chats/{chat_id}")
+            except MaxApiError as exc:
+                errors = [str(exc)]
+                if updates_error and updates_error not in errors:
+                    errors.append(f"updates: {updates_error}")
+                channels.append(
+                    {
+                        "chat_id": chat_id,
+                        "title": "настроенный канал",
+                        "link": "",
+                        "is_admin": False,
+                        "can_write": False,
+                        "permissions": [],
+                        "membership_error": "; ".join(errors),
+                    }
+                )
+                continue
             if chat.get("type") != "channel" or chat.get("status") != "active":
                 continue
             membership_error = ""
