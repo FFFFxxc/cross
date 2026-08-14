@@ -13,6 +13,41 @@ from tg_migrator.max_client import (
 
 
 class MaxClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovers_configured_channel_when_bot_added_was_consumed(self):
+        requested = []
+
+        async def handler(request):
+            requested.append(request.url.path)
+            if request.url.path == "/updates":
+                return httpx.Response(200, json={"updates": []})
+            if request.url.path.endswith("/members/me"):
+                return httpx.Response(
+                    200,
+                    json={"is_admin": False, "permissions": []},
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "chat_id": -77809668353385,
+                    "type": "channel",
+                    "status": "active",
+                    "title": "Аниме / 2D WEBM",
+                },
+            )
+
+        client = MaxClient(
+            MaxConfig("token", "-77809668353385"),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            channels = await client.discover_channels()
+        finally:
+            await client.aclose()
+
+        self.assertEqual(len(channels), 1)
+        self.assertFalse(channels[0]["is_admin"])
+        self.assertIn("/chats/-77809668353385", requested)
+
     async def test_discovers_official_channel_id_from_bot_added_update(self):
         async def handler(request):
             if request.url.path == "/updates":

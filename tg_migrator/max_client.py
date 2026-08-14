@@ -125,6 +125,12 @@ class MaxClient:
             for update in data.get("updates", [])
             if update.get("is_channel") and update.get("chat_id") is not None
         }
+        if self.config.channel.lstrip("-").isdigit():
+            configured_chat_id = int(self.config.channel)
+            if not any(
+                abs(value) == abs(configured_chat_id) for value in chat_ids
+            ):
+                chat_ids.add(configured_chat_id)
         channels = []
         for chat_id in sorted(chat_ids):
             chat = await self._api("GET", f"/chats/{chat_id}")
