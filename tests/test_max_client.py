@@ -29,6 +29,14 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
                         ]
                     },
                 )
+            if request.url.path == "/chats/-77809668353385/members/me":
+                return httpx.Response(
+                    200,
+                    json={
+                        "is_admin": True,
+                        "permissions": ["write", "edit", "delete"],
+                    },
+                )
             self.assertEqual(request.url.path, "/chats/-77809668353385")
             return httpx.Response(
                 200,
@@ -57,6 +65,9 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
                     "chat_id": -77809668353385,
                     "title": "Аниме / 2D WEBM",
                     "link": "https://max.ru/channel_animenaruto",
+                    "is_admin": True,
+                    "can_write": True,
+                    "permissions": ["write", "edit", "delete"],
                 }
             ],
         )

@@ -238,6 +238,9 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
                     "chat_id": -77809668353385,
                     "title": "Аниме / 2D WEBM",
                     "link": "https://max.ru/channel_animenaruto",
+                    "is_admin": True,
+                    "can_write": True,
+                    "permissions": ["write"],
                 }
             ]
 
@@ -247,6 +250,8 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await controller.handle_command(event, event.raw_text))
         self.assertIn("-77809668353385", event.responses[-1])
         self.assertIn("Аниме / 2D WEBM", event.responses[-1])
+        self.assertIn("админ: да", event.responses[-1])
+        self.assertIn("публикация: да", event.responses[-1])
 
     async def test_video_slot_claims_video_and_runs_only_once(self):
         controller, publisher = await self.controller()

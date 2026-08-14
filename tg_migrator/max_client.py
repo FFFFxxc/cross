@@ -130,11 +130,23 @@ class MaxClient:
             chat = await self._api("GET", f"/chats/{chat_id}")
             if chat.get("type") != "channel" or chat.get("status") != "active":
                 continue
+            membership = await self._api(
+                "GET",
+                f"/chats/{chat_id}/members/me",
+            )
+            permissions = list(membership.get("permissions") or [])
             channels.append(
                 {
                     "chat_id": int(chat.get("chat_id", chat_id)),
                     "title": str(chat.get("title") or "без названия"),
                     "link": str(chat.get("link") or ""),
+                    "is_admin": bool(membership.get("is_admin")),
+                    "can_write": bool(
+                        {"write", "post_edit_delete_message"}.intersection(
+                            permissions
+                        )
+                    ),
+                    "permissions": permissions,
                 }
             )
         return channels

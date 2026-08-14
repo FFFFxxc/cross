@@ -536,7 +536,9 @@ class AutomationController:
                     await event.respond(
                         "MAX-каналы:\n"
                         + "\n".join(
-                            f"• {channel['title']} — {channel['chat_id']}"
+                            f"• {channel['title']} — {channel['chat_id']}\n"
+                            f"  админ: {'да' if channel['is_admin'] else 'нет'}, "
+                            f"публикация: {'да' if channel['can_write'] else 'нет'}"
                             for channel in channels
                         )
                     )
