@@ -13,6 +13,54 @@ from tg_migrator.max_client import (
 
 
 class MaxClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_discovers_official_channel_id_from_bot_added_update(self):
+        async def handler(request):
+            if request.url.path == "/updates":
+                self.assertEqual(request.url.params["timeout"], "0")
+                return httpx.Response(
+                    200,
+                    json={
+                        "updates": [
+                            {
+                                "update_type": "bot_added",
+                                "chat_id": -77809668353385,
+                                "is_channel": True,
+                            }
+                        ]
+                    },
+                )
+            self.assertEqual(request.url.path, "/chats/-77809668353385")
+            return httpx.Response(
+                200,
+                json={
+                    "chat_id": -77809668353385,
+                    "type": "channel",
+                    "status": "active",
+                    "title": "Аниме / 2D WEBM",
+                    "link": "https://max.ru/channel_animenaruto",
+                },
+            )
+
+        client = MaxClient(
+            MaxConfig("token", "77809668353385"),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            channels = await client.discover_channels()
+        finally:
+            await client.aclose()
+
+        self.assertEqual(
+            channels,
+            [
+                {
+                    "chat_id": -77809668353385,
+                    "title": "Аниме / 2D WEBM",
+                    "link": "https://max.ru/channel_animenaruto",
+                }
+            ],
+        )
+
     async def test_resolves_public_channel_link_to_chat_id(self):
         async def handler(request):
             self.assertEqual(request.method, "GET")

@@ -52,6 +52,7 @@ HELP = """Управление Desiree:
 /slot ЧЧ:ММ any|video|image [ИСТОЧНИК] — настроить слот
 /unslot ЧЧ:ММ — удалить слот
 /signature ТЕКСТ | URL — изменить единственную подпись MAX
+/max_status — показать официальный chat_id MAX-канала
 /retry ID — повторить ошибку после проверки канала
 /status или /config — состояние
 /cancel — остановить массовую команду
@@ -529,6 +530,21 @@ class AutomationController:
                     self.state.set_setting("signature_text", parts[0])
                     self.state.set_setting("signature_url", parts[1])
                     await event.respond("Подпись MAX обновлена.")
+            elif command == "max_status":
+                channels = await self.publisher.max_client.discover_channels()
+                if channels:
+                    await event.respond(
+                        "MAX-каналы:\n"
+                        + "\n".join(
+                            f"• {channel['title']} — {channel['chat_id']}"
+                            for channel in channels
+                        )
+                    )
+                else:
+                    await event.respond(
+                        "MAX не вернул bot_added для активного канала. "
+                        "Удалите и снова добавьте бота администратором."
+                    )
             elif command == "retry":
                 if not arguments:
                     raise ValueError("Укажите ID элемента очереди.")

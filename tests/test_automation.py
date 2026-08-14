@@ -121,6 +121,7 @@ class FakePublisher:
     def __init__(self, state):
         self.state = state
         self.calls = []
+        self.max_client = SimpleNamespace()
 
     async def publish(self, item):
         self.calls.append(item)
@@ -227,6 +228,25 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.state.get_setting("signature_text"), "МОЙ КАНАЛ")
         self.assertEqual(self.state.get_setting("signature_url"), "https://t.me/custom")
+
+    async def test_max_status_reports_official_channel_id(self):
+        controller, publisher = await self.controller()
+
+        async def discover_channels():
+            return [
+                {
+                    "chat_id": -77809668353385,
+                    "title": "Аниме / 2D WEBM",
+                    "link": "https://max.ru/channel_animenaruto",
+                }
+            ]
+
+        publisher.max_client.discover_channels = discover_channels
+        event = Event("/max_status", outgoing=True, chat_id=8528395173)
+
+        self.assertTrue(await controller.handle_command(event, event.raw_text))
+        self.assertIn("-77809668353385", event.responses[-1])
+        self.assertIn("Аниме / 2D WEBM", event.responses[-1])
 
     async def test_video_slot_claims_video_and_runs_only_once(self):
         controller, publisher = await self.controller()

@@ -113,6 +113,32 @@ class MaxClient:
         self._chat_id = int(chat_id)
         return self._chat_id
 
+    async def discover_channels(self) -> list[dict]:
+        """Return official Bot API channel IDs seen in bot_added events."""
+        data = await self._api(
+            "GET",
+            "/updates",
+            params={"limit": "1000", "timeout": "0", "types": "bot_added"},
+        )
+        chat_ids = {
+            int(update["chat_id"])
+            for update in data.get("updates", [])
+            if update.get("is_channel") and update.get("chat_id") is not None
+        }
+        channels = []
+        for chat_id in sorted(chat_ids):
+            chat = await self._api("GET", f"/chats/{chat_id}")
+            if chat.get("type") != "channel" or chat.get("status") != "active":
+                continue
+            channels.append(
+                {
+                    "chat_id": int(chat.get("chat_id", chat_id)),
+                    "title": str(chat.get("title") or "без названия"),
+                    "link": str(chat.get("link") or ""),
+                }
+            )
+        return channels
+
     async def upload(self, path: Path, media_type: str) -> MaxAttachment:
         slot = await self._api("POST", "/uploads", params={"type": media_type})
         upload_url = slot.get("url")
