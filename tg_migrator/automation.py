@@ -142,8 +142,15 @@ class AutomationController:
     def is_authorized(self, event) -> bool:
         if not getattr(event, "is_private", False):
             return False
+        outgoing = getattr(event, "out", None)
+        if outgoing is None:
+            outgoing = getattr(
+                getattr(event, "message", None),
+                "out",
+                getattr(event, "outgoing", False),
+            )
         if (
-            getattr(event, "outgoing", False)
+            outgoing
             and self.account_id is not None
             and int(getattr(event, "chat_id", 0) or 0) == self.account_id
         ):

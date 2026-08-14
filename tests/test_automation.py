@@ -159,6 +159,17 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(controller.is_authorized(Event(sender_id=8235497168)))
         self.assertFalse(controller.is_authorized(Event(sender_id=999)))
 
+    async def test_saved_messages_uses_real_telethon_out_flag(self):
+        controller, _ = await self.controller()
+        event = SimpleNamespace(
+            is_private=True,
+            out=True,
+            chat_id=8528395173,
+            sender_id=8528395173,
+        )
+
+        self.assertTrue(controller.is_authorized(event))
+
     async def test_bare_telegram_link_adds_source_once(self):
         controller, _ = await self.controller()
         event = Event("https://t.me/new_source")
