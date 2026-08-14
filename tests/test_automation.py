@@ -235,6 +235,21 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.id for item in publisher.calls], [video.id])
         self.assertEqual(self.state.queue_item(image.id).status, "pending")
 
+    async def test_stale_slot_is_not_caught_up_after_late_restart(self):
+        controller, publisher = await self.controller()
+        item = self.state.enqueue(
+            "animeworldmem", "message:18", (18,), "image", 1,
+            datetime.now(timezone.utc),
+        )
+
+        published = await controller.run_due(
+            datetime(2026, 8, 14, 18, 10, tzinfo=controller.timezone)
+        )
+
+        self.assertFalse(published)
+        self.assertEqual(publisher.calls, [])
+        self.assertEqual(self.state.queue_item(item.id).status, "pending")
+
     async def test_refill_stops_at_queue_minimum(self):
         client = FakeClient(
             {"animeworldmem": [message(5), message(4), message(3), message(2), message(1)]}

@@ -33,6 +33,8 @@ DEFAULT_SLOTS = (
     Slot("21:00", "any"),
 )
 
+SLOT_GRACE = timedelta(minutes=5)
+
 HELP = """Управление Desiree:
 
 /add_source ССЫЛКА — добавить источник
@@ -317,7 +319,17 @@ class AutomationController:
     async def run_due(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(self.timezone)
         current_time = current.strftime("%H:%M")
-        due = [slot for slot in self.state.slots() if slot.time <= current_time]
+        due = []
+        for slot in self.state.slots():
+            if slot.time > current_time:
+                continue
+            scheduled = datetime.combine(
+                current.date(),
+                datetime.strptime(slot.time, "%H:%M").time(),
+                tzinfo=current.tzinfo,
+            )
+            if current - scheduled <= SLOT_GRACE:
+                due.append(slot)
         if not due:
             return False
         slot = max(due, key=lambda value: value.time)

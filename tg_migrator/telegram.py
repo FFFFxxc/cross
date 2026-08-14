@@ -39,6 +39,9 @@ def build_client(
         credentials.api_id,
         credentials.api_hash,
         flood_sleep_threshold=120,
+        # Telethon's internal reconnect can remain stuck after a transport
+        # disconnect. watch.maintain_connection owns the retry loop instead.
+        auto_reconnect=False,
     )
     setattr(client, _ENV_SESSION_FLAG, from_env)
     return client

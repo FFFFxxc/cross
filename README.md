@@ -143,7 +143,7 @@ Environment текущего Render-сервиса.
 | `TG_INITIAL_SOURCE` | `animeworldmem` |
 | `DATABASE_URL` | строка подключения Neon/PostgreSQL |
 | `MAX_BOT_TOKEN` | токен уже созданного MAX-бота |
-| `MAX_CHANNEL` | `channel_animenaruto` или числовой `chat_id` |
+| `MAX_CHANNEL` | числовой `chat_id`; для текущего канала `77809668353385` |
 | `MAX_SIGNATURE_TEXT` | начальный текст `НАШ ТГК` |
 | `MAX_SIGNATURE_URL` | начальная ссылка `https://t.me/webm4ik` |
 | `TG_QUEUE_MINIMUM` | минимальный запас, по умолчанию `18` |
@@ -151,8 +151,8 @@ Environment текущего Render-сервиса.
 | `TG_SCAN_LIMIT` | глубина сканирования, по умолчанию `120` |
 | `TG_TARGET_SCAN_LIMIT` | история `@webnmy` для защиты первого запуска, по умолчанию `1000` |
 
-Публичный MAX-канал автоматически разрешается через MAX API по значению
-`channel_animenaruto`; вручную искать числовой `chat_id` не требуется.
+MAX API принимает числовой `chat_id`. Для публичной ссылки
+`https://max.ru/channel_animenaruto` текущий ID — `77809668353385`.
 
 ## Безопасное переключение на Render
 
@@ -162,7 +162,7 @@ Environment текущего Render-сервиса.
    `tg-migrator: ok`.
 3. Добавить в сервис `cross` значения `DATABASE_URL` из Neon и
    `MAX_BOT_TOKEN` старого MAX-публикатора. Установить
-   `MAX_CHANNEL=channel_animenaruto`.
+   `MAX_CHANNEL=77809668353385`.
 4. Остановить старый сервис `telegram-max-crossposter`, который слушает
    `@webnmy`. Иначе старый relay и новый прямой publisher могут сделать дубль.
 5. Поставить `TG_AUTOMATION_ENABLED=true` и перезапустить `cross`.
