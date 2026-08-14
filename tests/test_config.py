@@ -14,7 +14,7 @@ class AutomationConfigTests(unittest.TestCase):
         self.assertEqual(config.owner_ids, frozenset({8235497168}))
         self.assertEqual(config.destination, "webnmy")
         self.assertEqual(config.initial_source, "animeworldmem")
-        self.assertEqual(config.max_channel, "77809668353385")
+        self.assertEqual(config.max_channel, "-77809668353385")
         self.assertEqual(config.signature_text, "НАШ ТГК")
         self.assertEqual(config.signature_url, "https://t.me/webm4ik")
         self.assertEqual(config.queue_minimum, 18)

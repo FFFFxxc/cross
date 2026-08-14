@@ -31,7 +31,7 @@ services:
       - key: MAX_BOT_TOKEN
         sync: false
       - key: MAX_CHANNEL
-        value: "77809668353385"
+        value: "-77809668353385"
       - key: MAX_SIGNATURE_TEXT
         value: НАШ ТГК
       - key: MAX_SIGNATURE_URL

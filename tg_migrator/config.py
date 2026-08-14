@@ -103,7 +103,7 @@ def _owner_ids(value: str | None) -> frozenset[int]:
 
 
 def _max_channel(value: str | None) -> str:
-    channel = (value or "77809668353385").strip()
+    channel = (value or "-77809668353385").strip()
     for prefix in ("https://max.ru/", "http://max.ru/", "max.ru/"):
         if channel.lower().startswith(prefix):
             channel = channel[len(prefix) :]

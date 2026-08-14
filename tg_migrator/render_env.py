@@ -42,7 +42,7 @@ def build_render_env(values: RenderEnvValues) -> str:
         ("TG_INITIAL_SOURCE", "animeworldmem"),
         ("DATABASE_URL", values.database_url),
         ("MAX_BOT_TOKEN", values.max_token),
-        ("MAX_CHANNEL", "77809668353385"),
+        ("MAX_CHANNEL", "-77809668353385"),
         ("MAX_API_BASE", "https://platform-api2.max.ru"),
         ("MAX_SIGNATURE_TEXT", "НАШ ТГК"),
         ("MAX_SIGNATURE_URL", "https://t.me/webm4ik"),
