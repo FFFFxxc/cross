@@ -38,6 +38,7 @@ def build_render_env(values: RenderEnvValues) -> str:
         ("TG_AUTOMATION_ENABLED", "false"),
         ("TG_OWNER_IDS", "8235497168"),
         ("TG_DESTINATION", "webnmy"),
+        ("TG_SOURCE", "animeworldmem"),
         ("TG_INITIAL_SOURCE", "animeworldmem"),
         ("DATABASE_URL", values.database_url),
         ("MAX_BOT_TOKEN", values.max_token),
