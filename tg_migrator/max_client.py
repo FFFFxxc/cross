@@ -113,6 +113,14 @@ class MaxClient:
         self._chat_id = int(chat_id)
         return self._chat_id
 
+    async def bot_info(self) -> dict:
+        data = await self._api("GET", "/me")
+        return {
+            "user_id": int(data.get("user_id") or data.get("id") or 0),
+            "name": str(data.get("first_name") or data.get("name") or "MAX-бот"),
+            "username": str(data.get("username") or ""),
+        }
+
     async def discover_channels(self) -> list[dict]:
         """Return official Bot API channel IDs seen in bot_added events."""
         data = await self._api(
@@ -136,10 +144,15 @@ class MaxClient:
             chat = await self._api("GET", f"/chats/{chat_id}")
             if chat.get("type") != "channel" or chat.get("status") != "active":
                 continue
-            membership = await self._api(
-                "GET",
-                f"/chats/{chat_id}/members/me",
-            )
+            membership_error = ""
+            try:
+                membership = await self._api(
+                    "GET",
+                    f"/chats/{chat_id}/members/me",
+                )
+            except MaxApiError as exc:
+                membership = {}
+                membership_error = str(exc)
             permissions = list(membership.get("permissions") or [])
             channels.append(
                 {
@@ -153,6 +166,7 @@ class MaxClient:
                         )
                     ),
                     "permissions": permissions,
+                    "membership_error": membership_error,
                 }
             )
         return channels

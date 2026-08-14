@@ -241,15 +241,25 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
                     "is_admin": True,
                     "can_write": True,
                     "permissions": ["write"],
+                    "membership_error": "",
                 }
             ]
 
+        async def bot_info():
+            return {
+                "user_id": 12345,
+                "name": "Crossposter",
+                "username": "crossposter_bot",
+            }
+
         publisher.max_client.discover_channels = discover_channels
+        publisher.max_client.bot_info = bot_info
         event = Event("/max_status", outgoing=True, chat_id=8528395173)
 
         self.assertTrue(await controller.handle_command(event, event.raw_text))
         self.assertIn("-77809668353385", event.responses[-1])
         self.assertIn("Аниме / 2D WEBM", event.responses[-1])
+        self.assertIn("Crossposter (@crossposter_bot, ID 12345)", event.responses[-1])
         self.assertIn("админ: да", event.responses[-1])
         self.assertIn("публикация: да", event.responses[-1])
 

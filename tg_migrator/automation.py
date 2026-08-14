@@ -531,14 +531,26 @@ class AutomationController:
                     self.state.set_setting("signature_url", parts[1])
                     await event.respond("Подпись MAX обновлена.")
             elif command == "max_status":
+                bot = await self.publisher.max_client.bot_info()
                 channels = await self.publisher.max_client.discover_channels()
                 if channels:
+                    username = (
+                        f" (@{bot['username']}, ID {bot['user_id']})"
+                        if bot["username"]
+                        else f" (ID {bot['user_id']})"
+                    )
                     await event.respond(
+                        f"MAX-бот Render: {bot['name']}{username}\n"
                         "MAX-каналы:\n"
                         + "\n".join(
                             f"• {channel['title']} — {channel['chat_id']}\n"
                             f"  админ: {'да' if channel['is_admin'] else 'нет'}, "
                             f"публикация: {'да' if channel['can_write'] else 'нет'}"
+                            + (
+                                f"\n  MAX API: {channel['membership_error']}"
+                                if channel.get("membership_error")
+                                else ""
+                            )
                             for channel in channels
                         )
                     )

@@ -13,6 +13,33 @@ from tg_migrator.max_client import (
 
 
 class MaxClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_reports_bot_identity_without_exposing_token(self):
+        async def handler(request):
+            self.assertEqual(request.url.path, "/me")
+            return httpx.Response(
+                200,
+                json={
+                    "user_id": 12345,
+                    "first_name": "Crossposter",
+                    "username": "crossposter_bot",
+                    "is_bot": True,
+                },
+            )
+
+        client = MaxClient(
+            MaxConfig("secret-token", "-77809668353385"),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            info = await client.bot_info()
+        finally:
+            await client.aclose()
+
+        self.assertEqual(
+            info,
+            {"user_id": 12345, "name": "Crossposter", "username": "crossposter_bot"},
+        )
+
     async def test_discovers_configured_channel_when_bot_added_was_consumed(self):
         requested = []
 
@@ -23,7 +50,7 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
             if request.url.path.endswith("/members/me"):
                 return httpx.Response(
                     200,
-                    json={"is_admin": False, "permissions": []},
+                    json={"success": False, "message": "Chat not found"},
                 )
             return httpx.Response(
                 200,
@@ -46,6 +73,7 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(channels), 1)
         self.assertFalse(channels[0]["is_admin"])
+        self.assertEqual(channels[0]["membership_error"], "Chat not found")
         self.assertIn("/chats/-77809668353385", requested)
 
     async def test_discovers_official_channel_id_from_bot_added_update(self):
@@ -103,6 +131,7 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
                     "is_admin": True,
                     "can_write": True,
                     "permissions": ["write", "edit", "delete"],
+                    "membership_error": "",
                 }
             ],
         )
