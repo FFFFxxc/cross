@@ -170,6 +170,33 @@ class MaxClientTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await client.aclose()
 
+    async def test_retries_positive_channel_id_after_definite_chat_not_found(self):
+        chat_ids = []
+
+        async def handler(request):
+            chat_ids.append(request.url.params["chat_id"])
+            if len(chat_ids) == 1:
+                return httpx.Response(
+                    404,
+                    json={"code": "chat.not.found", "message": "Chat not found"},
+                )
+            return httpx.Response(
+                200,
+                json={"message": {"body": {"mid": "max-mid-channel"}}},
+            )
+
+        client = MaxClient(
+            MaxConfig("token", "-77809668353385"),
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            mid = await client.send("Пост", [])
+        finally:
+            await client.aclose()
+
+        self.assertEqual(mid, "max-mid-channel")
+        self.assertEqual(chat_ids, ["-77809668353385", "77809668353385"])
+
 
 if __name__ == "__main__":
     unittest.main()

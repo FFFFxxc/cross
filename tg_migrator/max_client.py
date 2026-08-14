@@ -174,15 +174,13 @@ class MaxClient:
 
     async def send(self, text_html: str, attachments: list[MaxAttachment]) -> str:
         chat_id = await self.resolve_channel()
+        send_chat_id = chat_id
+        tried_positive_channel_id = False
         payload = {
             "text": text_html or None,
             "attachments": [attachment.as_dict() for attachment in attachments] or None,
             "notify": self.config.notify,
             "format": "html",
-        }
-        params = {
-            "chat_id": str(chat_id),
-            "disable_link_preview": str(self.config.disable_link_preview).lower(),
         }
         last_error: MaxApiError | None = None
         for delay in (0, 1, 2, 4, 8):
@@ -191,7 +189,12 @@ class MaxClient:
             try:
                 response = await self._client.post(
                     f"{self.config.api_base.rstrip('/')}/messages",
-                    params=params,
+                    params={
+                        "chat_id": str(send_chat_id),
+                        "disable_link_preview": str(
+                            self.config.disable_link_preview
+                        ).lower(),
+                    },
                     json=payload,
                     headers={"Authorization": self.config.token},
                 )
@@ -208,6 +211,18 @@ class MaxClient:
                 )
                 if last_error.code == "attachment.not.ready":
                     continue
+                if (
+                    400 <= response.status_code < 500
+                    and str(last_error).strip().lower() == "chat not found"
+                    and send_chat_id < 0
+                    and not tried_positive_channel_id
+                ):
+                    # MAX currently reports signed channel IDs in bot_added and
+                    # GET /chats, while POST /messages may require its absolute
+                    # value. A definite 4xx means the first request was not sent.
+                    send_chat_id = abs(send_chat_id)
+                    tried_positive_channel_id = True
+                    continue
                 raise last_error
             message = data.get("message") or {}
             body = message.get("body") or {}
@@ -216,6 +231,7 @@ class MaxClient:
                 raise AmbiguousMaxSendError(
                     "MAX принял запрос, но не вернул идентификатор сообщения"
                 )
+            self._chat_id = send_chat_id
             return str(mid)
         assert last_error is not None
         raise last_error
