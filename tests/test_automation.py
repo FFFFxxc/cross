@@ -291,6 +291,27 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Bot lookup failed", event.responses[-1])
         self.assertIn("-77809668353385", event.responses[-1])
 
+    async def test_max_probe_sends_directly_to_max_without_touching_queue(self):
+        controller, publisher = await self.controller()
+        item = self.state.enqueue(
+            "animeworldmem", "message:90", (90,), "video", 1,
+            datetime.now(timezone.utc),
+        )
+        calls = []
+
+        async def send(text_html, attachments):
+            calls.append((text_html, attachments))
+            return "max-probe-mid"
+
+        publisher.max_client.send = send
+        event = Event("/max_probe", outgoing=True, chat_id=8528395173)
+
+        self.assertTrue(await controller.handle_command(event, event.raw_text))
+        self.assertEqual(calls, [("Проверка связи Desiree", [])])
+        self.assertEqual(self.state.queue_item(item.id).status, "pending")
+        self.assertIn("MAX отвечает", event.responses[-1])
+        self.assertIn("max-probe-mid", event.responses[-1])
+
     async def test_video_slot_claims_video_and_runs_only_once(self):
         controller, publisher = await self.controller()
         image = self.state.enqueue(

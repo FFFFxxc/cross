@@ -53,6 +53,7 @@ HELP = """Управление Desiree:
 /unslot ЧЧ:ММ — удалить слот
 /signature ТЕКСТ | URL — изменить единственную подпись MAX
 /max_status — показать официальный chat_id MAX-канала
+/max_probe — отправить тест напрямую в MAX, не затрагивая очередь
 /retry ID — повторить ошибку после проверки канала
 /status или /config — состояние
 /cancel — остановить массовую команду
@@ -572,6 +573,12 @@ class AutomationController:
                         "Удалите и снова добавьте бота администратором."
                         + (f"\nMAX API: {channels_error}" if channels_error else "")
                     )
+            elif command == "max_probe":
+                mid = await self.publisher.max_client.send(
+                    "Проверка связи Desiree",
+                    [],
+                )
+                await event.respond(f"MAX отвечает. Тест опубликован: {mid}")
             elif command == "retry":
                 if not arguments:
                     raise ValueError("Укажите ID элемента очереди.")
