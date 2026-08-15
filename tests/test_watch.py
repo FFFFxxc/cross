@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -30,9 +31,30 @@ class FakeClient:
         self.connect_calls += 1
 
 
+class IncompleteReadClient(FakeClient):
+    async def run_until_disconnected(self):
+        self.run_calls += 1
+        if self.run_calls == 1:
+            raise asyncio.IncompleteReadError(b"", 8)
+        raise StopSignal()
+
+
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_transient_telegram_disconnect_reconnects_before_retrying(self):
         client = FakeClient()
+
+        async def no_wait(_seconds):
+            return None
+
+        with self.assertRaises(StopSignal):
+            await maintain_connection(client, sleep=no_wait)
+
+        self.assertEqual(client.run_calls, 2)
+        self.assertEqual(client.disconnect_calls, 1)
+        self.assertEqual(client.connect_calls, 1)
+
+    async def test_incomplete_telegram_read_reconnects_before_retrying(self):
+        client = IncompleteReadClient()
 
         async def no_wait(_seconds):
             return None

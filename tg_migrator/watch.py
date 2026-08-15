@@ -47,6 +47,7 @@ class WatchStatus:
 
 _TRANSIENT_CONNECTION_ERRORS = (
     InvalidBufferError,
+    asyncio.IncompleteReadError,
     OSError,
     ConnectionError,
     asyncio.TimeoutError,
