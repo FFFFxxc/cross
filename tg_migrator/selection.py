@@ -4,6 +4,7 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import date, datetime, time, timezone
 import hashlib
+import math
 import re
 from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
@@ -299,6 +300,34 @@ def post_activity(post: Post) -> int:
         reactions = getattr(getattr(message, "reactions", None), "results", None) or ()
         score += 5 * sum(int(getattr(reaction, "count", 0) or 0) for reaction in reactions)
     return score
+
+
+def post_smart_score(post: Post, now: datetime | None = None) -> int:
+    """Rank reach, engagement quality and freshness on one stable scale."""
+    views = 0
+    forwards = 0
+    reactions = 0
+    for message in post.messages:
+        views += int(getattr(message, "views", 0) or 0)
+        forwards += int(getattr(message, "forwards", 0) or 0)
+        results = getattr(getattr(message, "reactions", None), "results", None) or ()
+        reactions += sum(int(getattr(value, "count", 0) or 0) for value in results)
+
+    engagement_base = max(views, 100)
+    score = (
+        100 * math.log1p(views)
+        + 25 * reactions
+        + 40 * forwards
+        + 5_000 * reactions / engagement_base
+        + 7_500 * forwards / engagement_base
+    )
+    current = now or datetime.now(timezone.utc)
+    published_at = post.published_at
+    if published_at.tzinfo is None:
+        published_at = published_at.replace(tzinfo=timezone.utc)
+    age_days = max(0.0, (current - published_at).total_seconds() / 86_400)
+    freshness = 0.5 ** (age_days / 7)
+    return max(0, int(round(score * freshness)))
 
 
 def post_fingerprint(post: Post) -> str:

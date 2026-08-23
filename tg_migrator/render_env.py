@@ -49,7 +49,7 @@ def build_render_env(values: RenderEnvValues) -> str:
         ("TG_QUEUE_MINIMUM", "18"),
         ("TG_REFILL_INTERVAL", "900"),
         ("TG_SCAN_LIMIT", "120"),
-        ("TG_FRESH_DAYS", "30"),
+        ("TG_FRESH_DAYS", "7"),
         ("TG_TARGET_SCAN_LIMIT", "1000"),
         ("PORT", "10000"),
     )

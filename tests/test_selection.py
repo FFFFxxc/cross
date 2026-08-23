@@ -9,6 +9,7 @@ from tg_migrator.selection import (
     post_activity,
     post_fingerprint,
     post_media_kind,
+    post_smart_score,
     posts_from_date,
     sanitize_message_text,
 )
@@ -218,6 +219,23 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual(post_activity(post), 139)
+
+    def test_smart_score_decays_equally_active_older_post(self):
+        now = datetime(2025, 6, 10, 12, tzinfo=timezone.utc)
+        reactions = SimpleNamespace(results=[SimpleNamespace(count=20)])
+        fresh = Post(
+            "message:1",
+            (message(1, 9, views=1_000, reactions=reactions),),
+        )
+        older = Post(
+            "message:2",
+            (message(2, 3, views=1_000, reactions=reactions),),
+        )
+
+        self.assertGreater(
+            post_smart_score(fresh, now),
+            post_smart_score(older, now),
+        )
 
     def test_media_fingerprint_is_stable_across_message_ids_and_captions(self):
         first = message(1, 1, text="первая подпись", media=object(), video=object())

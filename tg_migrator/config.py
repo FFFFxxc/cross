@@ -136,7 +136,7 @@ def load_automation_config() -> AutomationConfig:
         queue_minimum=_positive_int(os.getenv("TG_QUEUE_MINIMUM"), 18),
         refill_interval=_positive_int(os.getenv("TG_REFILL_INTERVAL"), 900),
         scan_limit=_positive_int(os.getenv("TG_SCAN_LIMIT"), 120),
-        fresh_days=_positive_int(os.getenv("TG_FRESH_DAYS"), 30),
+        fresh_days=_positive_int(os.getenv("TG_FRESH_DAYS"), 7),
         target_scan_limit=_positive_int(os.getenv("TG_TARGET_SCAN_LIMIT"), 1000),
     )
 

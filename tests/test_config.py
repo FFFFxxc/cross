@@ -18,6 +18,7 @@ class AutomationConfigTests(unittest.TestCase):
         self.assertEqual(config.signature_text, "НАШ ТГК")
         self.assertEqual(config.signature_url, "https://t.me/webm4ik")
         self.assertEqual(config.queue_minimum, 18)
+        self.assertEqual(config.fresh_days, 7)
         self.assertEqual(config.target_scan_limit, 1000)
 
     def test_environment_overrides_runtime_controls(self):

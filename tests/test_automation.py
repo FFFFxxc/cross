@@ -1,7 +1,8 @@
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import random
 from types import SimpleNamespace
 
 from tg_migrator.automation import AutomationController, DEFAULT_SLOTS
@@ -31,11 +32,25 @@ def config(**overrides):
     return AutomationConfig(**values)
 
 
-def message(message_id, *, chat_id=-100, video=True, views=0):
+def message(
+    message_id,
+    *,
+    chat_id=-100,
+    video=True,
+    views=0,
+    forwards=0,
+    reactions=0,
+    published_at=None,
+):
+    reaction_results = (
+        [SimpleNamespace(count=reactions)] if reactions else []
+    )
     return SimpleNamespace(
         id=message_id,
         chat_id=chat_id,
-        date=datetime(2026, 8, 13, 12 + message_id % 10, tzinfo=timezone.utc),
+        date=published_at or datetime(
+            2026, 8, 13, 12 + message_id % 10, tzinfo=timezone.utc
+        ),
         raw_text=f"post {message_id}",
         message=f"post {message_id}",
         entities=[],
@@ -50,8 +65,8 @@ def message(message_id, *, chat_id=-100, video=True, views=0):
         grouped_id=None,
         action=None,
         views=views,
-        forwards=0,
-        reactions=None,
+        forwards=forwards,
+        reactions=SimpleNamespace(results=reaction_results),
     )
 
 
@@ -112,6 +127,13 @@ class FakeClient:
                 yield value
 
         return iterator()
+
+    async def get_messages(self, source, ids):
+        by_id = {
+            value.id: value
+            for value in self.posts.get(str(source), ())
+        }
+        return [by_id.get(int(message_id)) for message_id in ids]
 
     async def send_message(self, peer, text):
         self.sent.append((peer, text))
@@ -214,6 +236,156 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state.queue_counts(), {"pending": 2})
         self.assertIn("Добавлено: 0", event.responses[-1])
 
+    async def test_parse_prefers_high_engagement_over_empty_reach(self):
+        now = datetime.now(timezone.utc)
+        high_reach = message(
+            1,
+            views=10_000,
+            reactions=0,
+            published_at=now,
+        )
+        high_engagement = message(
+            2,
+            views=1_000,
+            reactions=200,
+            published_at=now,
+        )
+        client = FakeClient({"animeworldmem": [high_engagement, high_reach]})
+        controller, _ = await self.controller(client)
+
+        await controller.parse_latest(1, scan_count=2)
+
+        claimed = self.state.claim()
+        self.assertEqual(claimed.message_ids, (2,))
+
+    async def test_parse_ignores_posts_older_than_fresh_window(self):
+        now = datetime.now(timezone.utc)
+        client = FakeClient(
+            {
+                "animeworldmem": [
+                    message(2, published_at=now - timedelta(days=1)),
+                    message(1, published_at=now - timedelta(days=8)),
+                ]
+            }
+        )
+        controller, _ = await self.controller(client, fresh_days=7)
+
+        added = await controller.parse_latest(2, scan_count=2)
+
+        self.assertEqual(added, 1)
+        self.assertEqual(self.state.claim().message_ids, (2,))
+
+    async def test_publish_skips_stale_items_already_in_queue(self):
+        now = datetime.now(timezone.utc)
+        stale = self.state.enqueue(
+            "animeworldmem",
+            "message:1",
+            (1,),
+            "video",
+            100_000,
+            now - timedelta(days=8),
+        )
+        fresh = self.state.enqueue(
+            "animeworldmem",
+            "message:2",
+            (2,),
+            "video",
+            1,
+            now - timedelta(days=1),
+        )
+        controller, publisher = await self.controller(fresh_days=7)
+
+        published = await controller.publish_next(refill=False)
+
+        self.assertEqual(published.id, fresh.id)
+        self.assertEqual(self.state.queue_item(stale.id).status, "expired")
+        self.assertEqual([item.id for item in publisher.calls], [fresh.id])
+
+    async def test_publish_refreshes_activity_before_choosing(self):
+        now = datetime.now(timezone.utc)
+        stale_score = self.state.enqueue(
+            "animeworldmem", "message:1", (1,), "video", 100_000, now
+        )
+        newly_popular = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "video", 1, now
+        )
+        client = FakeClient(
+            {
+                "animeworldmem": [
+                    message(1, views=10_000, published_at=now),
+                    message(2, views=1_000, reactions=200, published_at=now),
+                ]
+            }
+        )
+        controller, publisher = await self.controller(client)
+        controller._rng = random.Random(1)
+
+        published = await controller.publish_next(refill=False)
+
+        self.assertEqual(published.id, newly_popular.id)
+        self.assertGreater(
+            self.state.queue_item(newly_popular.id).score,
+            self.state.queue_item(stale_score.id).score,
+        )
+        self.assertEqual([item.id for item in publisher.calls], [newly_popular.id])
+
+    async def test_publish_uses_weighted_choice_inside_top_five(self):
+        now = datetime.now(timezone.utc)
+        items = [
+            self.state.enqueue(
+                "animeworldmem",
+                f"message:{index}",
+                (index,),
+                "video",
+                score,
+                now,
+            )
+            for index, score in enumerate((500, 400, 300, 200, 100, 1), start=1)
+        ]
+        controller, publisher = await self.controller()
+        controller._rng = random.Random(0)
+
+        published = await controller.publish_next(refill=False)
+
+        self.assertEqual(published.id, items[2].id)
+        self.assertEqual([item.id for item in publisher.calls], [items[2].id])
+        self.assertEqual(self.state.queue_item(items[5].id).status, "pending")
+
+    async def test_publish_rotates_away_from_previous_source(self):
+        now = datetime.now(timezone.utc)
+        previous_source_items = [
+            self.state.enqueue(
+                "source-a",
+                f"message:{index}",
+                (index,),
+                "video",
+                10_000 - index,
+                now,
+            )
+            for index in range(1, 6)
+        ]
+        other_source = self.state.enqueue(
+            "source-b", "message:20", (20,), "video", 1, now
+        )
+        self.state.set_setting("last_published_source", "source-a")
+        controller, publisher = await self.controller(scan_limit=5)
+        controller._rng = random.Random(1)
+
+        published = await controller.publish_next(refill=False)
+
+        self.assertEqual(published.id, other_source.id)
+        self.assertTrue(
+            all(
+                self.state.queue_item(item.id).status == "pending"
+                for item in previous_source_items
+            )
+        )
+        self.assertEqual(
+            self.state.get_setting("last_published_source"),
+            "source-b",
+        )
+        self.assertEqual([item.id for item in publisher.calls], [other_source.id])
+
     async def test_commands_change_typed_slot_and_signature(self):
         controller, _ = await self.controller()
         await controller.handle_command(Event(), "/slot 14:00 video animeworldmem")
@@ -228,6 +400,17 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(self.state.get_setting("signature_text"), "МОЙ КАНАЛ")
         self.assertEqual(self.state.get_setting("signature_url"), "https://t.me/custom")
+
+    async def test_fresh_days_command_changes_smart_window(self):
+        controller, _ = await self.controller()
+        update = Event("/fresh_days 7")
+        show = Event("/fresh_days")
+
+        self.assertTrue(await controller.handle_command(update, update.raw_text))
+        self.assertTrue(await controller.handle_command(show, show.raw_text))
+
+        self.assertEqual(self.state.get_setting("fresh_days"), "7")
+        self.assertIn("7", show.responses[-1])
 
     async def test_max_status_reports_official_channel_id(self):
         controller, publisher = await self.controller()

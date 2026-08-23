@@ -26,6 +26,8 @@ services:
         value: animeworldmem
       - key: TG_TARGET_SCAN_LIMIT
         value: "1000"
+      - key: TG_FRESH_DAYS
+        value: "7"
       - key: DATABASE_URL
         sync: false
       - key: MAX_BOT_TOKEN

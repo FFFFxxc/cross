@@ -399,6 +399,77 @@ class MigrationState:
             ).mappings().one_or_none()
             return self._queue_item(row)
 
+    def pending_items(
+        self,
+        media_kind: str = "any",
+        source: str | None = None,
+        *,
+        limit: int = 120,
+    ) -> list[QueueItem]:
+        clauses = ["status = 'pending'"]
+        params: dict[str, str | int] = {"limit": int(limit)}
+        if media_kind != "any":
+            clauses.append("media_kind = :media_kind")
+            params["media_kind"] = media_kind
+        if source is not None:
+            clauses.append("source = :source")
+            params["source"] = str(source)
+        where = " AND ".join(clauses)
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    SELECT * FROM automation_queue WHERE {where}
+                    ORDER BY score DESC, published_at ASC, created_at ASC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).mappings()
+            return [self._queue_item(row) for row in rows]
+
+    def update_score(self, item_id: str, score: int) -> bool:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue SET score = :score
+                    WHERE id = :id AND status = 'pending'
+                    """
+                ),
+                {"id": item_id, "score": int(score)},
+            )
+            return result.rowcount == 1
+
+    def claim_item(self, item_id: str) -> QueueItem | None:
+        with self._engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT * FROM automation_queue
+                    WHERE id = :id AND status = 'pending'
+                    """
+                ),
+                {"id": item_id},
+            ).mappings().one_or_none()
+            if row is None:
+                return None
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue SET status = 'processing', error = NULL
+                    WHERE id = :id AND status = 'pending'
+                    """
+                ),
+                {"id": item_id},
+            )
+            if result.rowcount != 1:
+                return None
+            updated = dict(row)
+            updated["status"] = "processing"
+            updated["error"] = None
+            return self._queue_item(updated)
+
     def claim(self, media_kind: str = "any", source: str | None = None) -> QueueItem | None:
         clauses = ["status = 'pending'"]
         params: dict[str, str] = {}
@@ -533,6 +604,20 @@ class MigrationState:
 
     def pending_count(self) -> int:
         return self.queue_counts().get("pending", 0)
+
+    def expire_pending_before(self, cutoff: datetime) -> int:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET status = 'expired', error = NULL
+                    WHERE status = 'pending' AND published_at < :cutoff
+                    """
+                ),
+                {"cutoff": cutoff.isoformat()},
+            )
+            return int(result.rowcount)
 
     def claim_slot(self, run_date: date, run_time: str) -> bool:
         with self._engine.begin() as connection:

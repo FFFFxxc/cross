@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -15,10 +16,10 @@ from .selection import (
     MOSCOW,
     latest_posts,
     parse_start_date,
-    post_activity,
     post_from_messages,
     post_fingerprint,
     post_media_kind,
+    post_smart_score,
     posts_from_date,
 )
 from .state import MigrationState, QueueItem, Slot
@@ -44,6 +45,7 @@ HELP = """Управление Desiree:
 /parse_from ДАТА [КОЛИЧЕСТВО] — собрать с даты
 /parse_period ДАТА ДАТА [КОЛИЧЕСТВО] — собрать за период
 /parse_top ДНЕЙ КОЛИЧЕСТВО [ИСТОЧНИК] — самые активные
+/fresh_days [ДНЕЙ] — показать/изменить окно свежести
 /transfer КОЛИЧЕСТВО — собрать и опубликовать сейчас
 /transfer_from ДАТА — собрать с даты и опубликовать
 /queue — состояние очереди
@@ -94,6 +96,13 @@ class AutomationController:
         self.account_id: int | None = None
         self._chat_sources: dict[int, str] = {}
         self._cancel = asyncio.Event()
+        self._rng = random.Random()
+
+    def _fresh_days(self) -> int:
+        return int(self.state.get_setting("fresh_days", str(self.config.fresh_days)))
+
+    def _fresh_cutoff(self) -> datetime:
+        return datetime.now(timezone.utc) - timedelta(days=self._fresh_days())
 
     async def initialize(self) -> None:
         self.account_id = int((await self.client.get_me()).id)
@@ -219,7 +228,7 @@ class AutomationController:
                 post.key,
                 post.ids,
                 post_media_kind(post),
-                post_activity(post),
+                post_smart_score(post),
                 post.published_at,
                 fingerprint=post_fingerprint(post),
             )
@@ -248,7 +257,21 @@ class AutomationController:
                 self.client.iter_messages(peer, limit=read_count),
                 read_count,
             )
-            posts.sort(key=lambda post: (post_activity(post), post.published_at), reverse=True)
+            cutoff = self._fresh_cutoff()
+            posts = [
+                post
+                for post in posts
+                if (
+                    post.published_at
+                    if post.published_at.tzinfo is not None
+                    else post.published_at.replace(tzinfo=timezone.utc)
+                )
+                >= cutoff
+            ]
+            posts.sort(
+                key=lambda post: (post_smart_score(post), post.published_at),
+                reverse=True,
+            )
             if required_kind != "any":
                 posts = [post for post in posts if post_media_kind(post) == required_kind]
             total += self._enqueue_posts(peer, posts, count - total)
@@ -270,7 +293,10 @@ class AutomationController:
             if end is not None:
                 posts = [post for post in posts if post.published_at < end]
             if top:
-                posts.sort(key=lambda post: (post_activity(post), post.published_at), reverse=True)
+                posts.sort(
+                    key=lambda post: (post_smart_score(post), post.published_at),
+                    reverse=True,
+                )
             total += self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
@@ -283,6 +309,7 @@ class AutomationController:
         required_kind: str = "any",
         source: str | None = None,
     ) -> int:
+        self.state.expire_pending_before(self._fresh_cutoff())
         pending = self.state.pending_count()
         if not force and pending >= self.config.queue_minimum:
             return 0
@@ -301,15 +328,82 @@ class AutomationController:
         *,
         refill: bool = True,
     ) -> QueueItem | None:
+        self.state.expire_pending_before(self._fresh_cutoff())
         source = str(normalize_peer(source)) if source is not None else None
-        item = self.state.claim(kind, source)
+        await self._refresh_pending_scores(kind, source)
+        item = self._claim_smart(kind, source)
         if item is None and refill:
             await self.refill(force=True, required_kind=kind, source=source)
-            item = self.state.claim(kind, source)
+            await self._refresh_pending_scores(kind, source)
+            item = self._claim_smart(kind, source)
         if item is None:
             return None
         await self.publisher.publish(item)
+        self.state.set_setting("last_published_source", item.source)
         return item
+
+    def _claim_smart(
+        self,
+        kind: str = "any",
+        source: str | None = None,
+    ) -> QueueItem | None:
+        candidates = self.state.pending_items(
+            kind,
+            source,
+            limit=max(self.config.scan_limit, self.state.pending_count()),
+        )
+        if not candidates:
+            return None
+        if source is None:
+            previous_source = self.state.get_setting("last_published_source")
+            rotated = [
+                candidate
+                for candidate in candidates
+                if candidate.source != previous_source
+            ]
+            if rotated:
+                candidates = rotated
+        candidates = candidates[:5]
+        weights = (10, 6, 3, 2, 1)[: len(candidates)]
+        selected = self._rng.choices(candidates, weights=weights, k=1)[0]
+        return self.state.claim_item(selected.id)
+
+    async def _refresh_pending_scores(
+        self,
+        kind: str = "any",
+        source: str | None = None,
+    ) -> None:
+        items = self.state.pending_items(kind, source, limit=self.config.scan_limit)
+        by_source: dict[str, list[QueueItem]] = {}
+        for item in items:
+            by_source.setdefault(item.source, []).append(item)
+        for peer, source_items in by_source.items():
+            message_ids = list(
+                dict.fromkeys(
+                    message_id
+                    for item in source_items
+                    for message_id in item.message_ids
+                )
+            )
+            try:
+                messages = await self.client.get_messages(peer, ids=message_ids)
+            except Exception:
+                continue
+            messages_by_id = {
+                int(message.id): message
+                for message in messages or ()
+                if message is not None
+            }
+            for item in source_items:
+                post = post_from_messages(
+                    tuple(
+                        messages_by_id[message_id]
+                        for message_id in item.message_ids
+                        if message_id in messages_by_id
+                    )
+                )
+                if post is not None:
+                    self.state.update_score(item.id, post_smart_score(post))
 
     async def handle_new_post(self, messages, *, chat_id: int | None = None) -> bool:
         if not messages:
@@ -423,6 +517,21 @@ class AutomationController:
             added = await self.parse_from(start, count, source=source, top=True)
             await event.respond(f"Добавлено активных постов: {added}.")
 
+    async def _fresh_days_command(self, event, arguments: list[str]) -> None:
+        if not arguments:
+            await event.respond(f"Окно свежести: {self._fresh_days()} дней.")
+            return
+        if len(arguments) != 1:
+            raise ValueError("Свежесть указывается одним числом от 1 до 90 дней.")
+        days = int(arguments[0])
+        if not 1 <= days <= 90:
+            raise ValueError("Свежесть указывается одним числом от 1 до 90 дней.")
+        self.state.set_setting("fresh_days", str(days))
+        expired = self.state.expire_pending_before(self._fresh_cutoff())
+        await event.respond(
+            f"Окно свежести: {days} дней. Устаревших в очереди: {expired}."
+        )
+
     async def handle_command(self, event, raw_text: str) -> bool:
         if not self.is_authorized(event):
             return False
@@ -471,6 +580,8 @@ class AutomationController:
                 "transfer", "transfer_from", "forward", "forward_from",
             }:
                 await self._parse_command(event, command, arguments)
+            elif command == "fresh_days":
+                await self._fresh_days_command(event, arguments)
             elif command == "queue":
                 await self._respond_queue(event)
             elif command == "now":
