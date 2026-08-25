@@ -13,6 +13,7 @@ from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from .config import AutomationConfig, normalize_peer
 from .post_metadata import caption_excerpt, post_metrics
+from .previews import capture_preview
 from .selection import (
     MOSCOW,
     latest_posts,
@@ -219,7 +220,12 @@ class AutomationController:
             raise ValueError("Такого источника нет. Сначала используйте /add_source.")
         return [peer]
 
-    def _enqueue_posts(self, source: str, posts, limit: int | None = None) -> int:
+    async def _enqueue_posts(
+        self,
+        source: str,
+        posts,
+        limit: int | None = None,
+    ) -> int:
         added = 0
         for post in posts:
             if self._cancel.is_set():
@@ -235,12 +241,15 @@ class AutomationController:
             )
             if item is not None:
                 metrics = post_metrics(post)
+                preview = await capture_preview(self.client, post.messages)
                 self.state.update_post_metadata(
                     item.id,
                     caption_excerpt=caption_excerpt(post),
                     views_count=metrics.views,
                     reactions_count=metrics.reactions,
                     forwards_count=metrics.forwards,
+                    preview_mime=preview.mime_type if preview is not None else None,
+                    preview_data=preview.data if preview is not None else None,
                 )
                 added += 1
                 if limit is not None and added >= limit:
@@ -283,7 +292,7 @@ class AutomationController:
             )
             if required_kind != "any":
                 posts = [post for post in posts if post_media_kind(post) == required_kind]
-            total += self._enqueue_posts(peer, posts, count - total)
+            total += await self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
         return total
@@ -306,7 +315,7 @@ class AutomationController:
                     key=lambda post: (post_smart_score(post), post.published_at),
                     reverse=True,
                 )
-            total += self._enqueue_posts(peer, posts, count - total)
+            total += await self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
         return total
@@ -448,7 +457,7 @@ class AutomationController:
         post = post_from_messages(tuple(messages))
         if post is None:
             return False
-        return self._enqueue_posts(source, [post]) == 1
+        return await self._enqueue_posts(source, [post]) == 1
 
     async def run_due(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(self.timezone)

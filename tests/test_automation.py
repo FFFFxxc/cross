@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import random
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from tg_migrator.automation import AutomationController, DEFAULT_SLOTS
 from tg_migrator.config import AutomationConfig
+from tg_migrator.previews import Preview
 from tg_migrator.state import MigrationState, Slot
 
 
@@ -285,6 +287,26 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(refreshed.views_count, 7_500)
         self.assertEqual(refreshed.reactions_count, 140)
         self.assertEqual(refreshed.forwards_count, 10)
+
+    async def test_preview_is_captured_only_for_new_queue_item(self):
+        now = datetime.now(timezone.utc)
+        client = FakeClient(
+            {"animeworldmem": [message(1, views=10, published_at=now)]}
+        )
+        controller, _ = await self.controller(client)
+        preview = Preview("image/webp", b"small-preview")
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=preview),
+        ) as capture:
+            self.assertEqual(await controller.parse_latest(1), 1)
+            self.assertEqual(await controller.parse_latest(1), 0)
+
+        self.assertEqual(capture.await_count, 1)
+        saved = self.state.pending_items()[0]
+        self.assertEqual(saved.preview_mime, "image/webp")
+        self.assertEqual(saved.preview_data, b"small-preview")
 
     async def test_automatic_thresholds_filter_but_manual_claim_bypasses_them(self):
         now = datetime.now(timezone.utc)
