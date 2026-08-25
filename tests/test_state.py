@@ -1,3 +1,4 @@
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -42,6 +43,81 @@ class StateTests(unittest.TestCase):
             self.assertTrue(state.remove_slot("14:00"))
             self.assertFalse(state.remove_slot("14:00"))
             self.assertTrue(state.remove_source("animeworldmem"))
+            state.close()
+
+    def test_additive_schema_preserves_legacy_rows_and_stores_dashboard_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "state.sqlite3"
+            with sqlite3.connect(database) as connection:
+                connection.executescript(
+                    """
+                    CREATE TABLE automation_sources (
+                        peer TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        added_at TEXT NOT NULL
+                    );
+                    CREATE TABLE automation_queue (
+                        id TEXT PRIMARY KEY,
+                        source TEXT NOT NULL,
+                        post_key TEXT NOT NULL,
+                        message_ids TEXT NOT NULL,
+                        media_kind TEXT NOT NULL,
+                        score INTEGER NOT NULL,
+                        published_at TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        telegram_message_ids TEXT,
+                        max_mid TEXT,
+                        error TEXT,
+                        created_at TEXT NOT NULL,
+                        UNIQUE (source, post_key)
+                    );
+                    """
+                )
+
+            state = MigrationState(database)
+            self.assertTrue(state.add_source("source", "Source"))
+            self.assertTrue(
+                state.update_source_availability("source", "available")
+            )
+            item = state.enqueue(
+                "source",
+                "message:1",
+                (1,),
+                "image",
+                10,
+                datetime.now(timezone.utc),
+            )
+            self.assertTrue(
+                state.update_post_metadata(
+                    item.id,
+                    caption_excerpt="caption",
+                    views_count=5_000,
+                    reactions_count=120,
+                    forwards_count=31,
+                    preview_mime="image/webp",
+                    preview_data=b"preview",
+                )
+            )
+            state.close()
+
+            state = MigrationState(database)
+            saved = state.queue_item(item.id)
+            self.assertEqual(saved.caption_excerpt, "caption")
+            self.assertEqual(saved.views_count, 5_000)
+            self.assertEqual(saved.reactions_count, 120)
+            self.assertEqual(saved.forwards_count, 31)
+            self.assertEqual(saved.preview_mime, "image/webp")
+            self.assertEqual(saved.preview_data, b"preview")
+            source = state.sources()[0]
+            self.assertEqual(source.availability, "available")
+            self.assertIsNotNone(source.checked_at)
+            self.assertIsNone(source.error)
+            with self.assertRaisesRegex(ValueError, "131072"):
+                state.update_post_metadata(
+                    item.id,
+                    preview_mime="image/webp",
+                    preview_data=b"x" * 131_073,
+                )
             state.close()
 
     def test_queue_deduplicates_claims_and_records_delivery(self):
@@ -96,6 +172,81 @@ class StateTests(unittest.TestCase):
             )
             self.assertIsNotNone(first)
             self.assertIsNone(second)
+            state.close()
+
+    def test_dashboard_actions_are_atomic_and_publish_is_unique_while_active(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source",
+                "message:1",
+                (1,),
+                "image",
+                10,
+                datetime.now(timezone.utc),
+            )
+
+            action = state.enqueue_action(
+                "publish_now",
+                {"item_id": item.id},
+                queue_item_id=item.id,
+            )
+            self.assertIsNotNone(action)
+            self.assertIsNone(
+                state.enqueue_action(
+                    "publish_now",
+                    {"item_id": item.id},
+                    queue_item_id=item.id,
+                )
+            )
+            claimed = state.claim_action()
+            self.assertEqual(claimed.id, action.id)
+            self.assertEqual(claimed.status, "processing")
+            self.assertIsNone(state.claim_action())
+
+            self.assertTrue(
+                state.complete_action(action.id, {"max_mid": "mid-1"})
+            )
+            completed = state.action(action.id)
+            self.assertEqual(completed.status, "completed")
+            self.assertEqual(completed.result, {"max_mid": "mid-1"})
+            self.assertIsNotNone(completed.completed_at)
+            self.assertIsNotNone(
+                state.enqueue_action(
+                    "publish_now",
+                    {"item_id": item.id},
+                    queue_item_id=item.id,
+                )
+            )
+            state.close()
+
+    def test_dashboard_action_failure_skip_and_heartbeat_are_guarded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source",
+                "message:1",
+                (1,),
+                "video",
+                10,
+                datetime.now(timezone.utc),
+            )
+            failed = state.enqueue_action("scan", {"count": 10})
+            state.claim_action()
+            self.assertTrue(state.fail_action(failed.id, "x" * 1_100))
+            self.assertEqual(len(state.action(failed.id).error), 1_000)
+            self.assertFalse(state.complete_action(failed.id, {"added": 1}))
+
+            self.assertTrue(state.skip_item(item.id))
+            self.assertFalse(state.skip_item(item.id))
+            self.assertEqual(state.queue_item(item.id).status, "skipped")
+            self.assertEqual(state.recent_actions(1)[0].id, failed.id)
+
+            heartbeat = state.touch_worker_heartbeat()
+            self.assertEqual(
+                state.get_setting("worker_heartbeat_at"),
+                heartbeat.isoformat(),
+            )
             state.close()
 
     def test_ambiguous_items_require_manual_retry(self):
