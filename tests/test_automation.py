@@ -258,6 +258,66 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         claimed = self.state.claim()
         self.assertEqual(claimed.message_ids, (2,))
 
+    async def test_parse_and_refresh_persist_live_engagement_metadata(self):
+        now = datetime.now(timezone.utc)
+        original = message(
+            1,
+            views=1_000,
+            forwards=4,
+            reactions=20,
+            published_at=now,
+        )
+        client = FakeClient({"animeworldmem": [original]})
+        controller, _ = await self.controller(client)
+
+        await controller.parse_latest(1)
+        item = self.state.pending_items()[0]
+        self.assertEqual(item.caption_excerpt, "post 1")
+        self.assertEqual(item.views_count, 1_000)
+        self.assertEqual(item.reactions_count, 20)
+        self.assertEqual(item.forwards_count, 4)
+
+        original.views = 7_500
+        original.forwards = 10
+        original.reactions.results[0].count = 140
+        await controller._refresh_pending_scores()
+        refreshed = self.state.queue_item(item.id)
+        self.assertEqual(refreshed.views_count, 7_500)
+        self.assertEqual(refreshed.reactions_count, 140)
+        self.assertEqual(refreshed.forwards_count, 10)
+
+    async def test_automatic_thresholds_filter_but_manual_claim_bypasses_them(self):
+        now = datetime.now(timezone.utc)
+        below_reactions = self.state.enqueue(
+            "animeworldmem", "message:1", (1,), "video", 300, now
+        )
+        below_views = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "video", 200, now
+        )
+        eligible = self.state.enqueue(
+            "animeworldmem", "message:3", (3,), "video", 100, now
+        )
+        self.state.update_post_metadata(
+            below_reactions.id, views_count=8_000, reactions_count=99
+        )
+        self.state.update_post_metadata(
+            below_views.id, views_count=4_999, reactions_count=200
+        )
+        self.state.update_post_metadata(
+            eligible.id, views_count=5_000, reactions_count=100
+        )
+        self.state.set_setting("min_reactions", "100")
+        self.state.set_setting("min_views", "5000")
+        controller, _ = await self.controller()
+
+        self.assertEqual(controller._claim_smart().id, eligible.id)
+        self.assertIsNone(controller._claim_smart())
+        self.assertEqual(self.state.claim_item(below_reactions.id).id, below_reactions.id)
+
+        self.state.set_setting("min_reactions", "0")
+        self.state.set_setting("min_views", "0")
+        self.assertEqual(controller._claim_smart().id, below_views.id)
+
     async def test_parse_ignores_posts_older_than_fresh_window(self):
         now = datetime.now(timezone.utc)
         client = FakeClient(

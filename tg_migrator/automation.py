@@ -12,6 +12,7 @@ from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from .config import AutomationConfig, normalize_peer
+from .post_metadata import caption_excerpt, post_metrics
 from .selection import (
     MOSCOW,
     latest_posts,
@@ -233,6 +234,14 @@ class AutomationController:
                 fingerprint=post_fingerprint(post),
             )
             if item is not None:
+                metrics = post_metrics(post)
+                self.state.update_post_metadata(
+                    item.id,
+                    caption_excerpt=caption_excerpt(post),
+                    views_count=metrics.views,
+                    reactions_count=metrics.reactions,
+                    forwards_count=metrics.forwards,
+                )
                 added += 1
                 if limit is not None and added >= limit:
                     break
@@ -352,6 +361,14 @@ class AutomationController:
             source,
             limit=max(self.config.scan_limit, self.state.pending_count()),
         )
+        minimum_reactions = self._non_negative_setting("min_reactions")
+        minimum_views = self._non_negative_setting("min_views")
+        candidates = [
+            item
+            for item in candidates
+            if item.reactions_count >= minimum_reactions
+            and item.views_count >= minimum_views
+        ]
         if not candidates:
             return None
         if source is None:
@@ -367,6 +384,12 @@ class AutomationController:
         weights = (10, 6, 3, 2, 1)[: len(candidates)]
         selected = self._rng.choices(candidates, weights=weights, k=1)[0]
         return self.state.claim_item(selected.id)
+
+    def _non_negative_setting(self, key: str) -> int:
+        try:
+            return max(0, int(self.state.get_setting(key, "0") or 0))
+        except (TypeError, ValueError):
+            return 0
 
     async def _refresh_pending_scores(
         self,
@@ -403,7 +426,15 @@ class AutomationController:
                     )
                 )
                 if post is not None:
-                    self.state.update_score(item.id, post_smart_score(post))
+                    metrics = post_metrics(post)
+                    self.state.update_post_metadata(
+                        item.id,
+                        score=post_smart_score(post),
+                        caption_excerpt=caption_excerpt(post),
+                        views_count=metrics.views,
+                        reactions_count=metrics.reactions,
+                        forwards_count=metrics.forwards,
+                    )
 
     async def handle_new_post(self, messages, *, chat_id: int | None = None) -> bool:
         if not messages:

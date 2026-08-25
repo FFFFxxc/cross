@@ -583,6 +583,7 @@ class MigrationState:
         self,
         item_id: str,
         *,
+        score: int | None = None,
         caption_excerpt: str | None = None,
         views_count: int | None = None,
         reactions_count: int | None = None,
@@ -602,6 +603,9 @@ class MigrationState:
 
         values: dict[str, object] = {"id": item_id}
         assignments: list[str] = []
+        if score is not None:
+            assignments.append("score = :score")
+            values["score"] = int(score)
         if caption_excerpt is not None:
             assignments.append("caption_excerpt = :caption_excerpt")
             values["caption_excerpt"] = caption_excerpt[:2000]
