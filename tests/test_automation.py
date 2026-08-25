@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import random
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from tg_migrator.automation import AutomationController, DEFAULT_SLOTS
 from tg_migrator.config import AutomationConfig
+from tg_migrator.previews import Preview
 from tg_migrator.state import MigrationState, Slot
 
 
@@ -258,6 +260,86 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         claimed = self.state.claim()
         self.assertEqual(claimed.message_ids, (2,))
 
+    async def test_parse_and_refresh_persist_live_engagement_metadata(self):
+        now = datetime.now(timezone.utc)
+        original = message(
+            1,
+            views=1_000,
+            forwards=4,
+            reactions=20,
+            published_at=now,
+        )
+        client = FakeClient({"animeworldmem": [original]})
+        controller, _ = await self.controller(client)
+
+        await controller.parse_latest(1)
+        item = self.state.pending_items()[0]
+        self.assertEqual(item.caption_excerpt, "post 1")
+        self.assertEqual(item.views_count, 1_000)
+        self.assertEqual(item.reactions_count, 20)
+        self.assertEqual(item.forwards_count, 4)
+
+        original.views = 7_500
+        original.forwards = 10
+        original.reactions.results[0].count = 140
+        await controller._refresh_pending_scores()
+        refreshed = self.state.queue_item(item.id)
+        self.assertEqual(refreshed.views_count, 7_500)
+        self.assertEqual(refreshed.reactions_count, 140)
+        self.assertEqual(refreshed.forwards_count, 10)
+
+    async def test_preview_is_captured_only_for_new_queue_item(self):
+        now = datetime.now(timezone.utc)
+        client = FakeClient(
+            {"animeworldmem": [message(1, views=10, published_at=now)]}
+        )
+        controller, _ = await self.controller(client)
+        preview = Preview("image/webp", b"small-preview")
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=preview),
+        ) as capture:
+            self.assertEqual(await controller.parse_latest(1), 1)
+            self.assertEqual(await controller.parse_latest(1), 0)
+
+        self.assertEqual(capture.await_count, 1)
+        saved = self.state.pending_items()[0]
+        self.assertEqual(saved.preview_mime, "image/webp")
+        self.assertEqual(saved.preview_data, b"small-preview")
+
+    async def test_automatic_thresholds_filter_but_manual_claim_bypasses_them(self):
+        now = datetime.now(timezone.utc)
+        below_reactions = self.state.enqueue(
+            "animeworldmem", "message:1", (1,), "video", 300, now
+        )
+        below_views = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "video", 200, now
+        )
+        eligible = self.state.enqueue(
+            "animeworldmem", "message:3", (3,), "video", 100, now
+        )
+        self.state.update_post_metadata(
+            below_reactions.id, views_count=8_000, reactions_count=99
+        )
+        self.state.update_post_metadata(
+            below_views.id, views_count=4_999, reactions_count=200
+        )
+        self.state.update_post_metadata(
+            eligible.id, views_count=5_000, reactions_count=100
+        )
+        self.state.set_setting("min_reactions", "100")
+        self.state.set_setting("min_views", "5000")
+        controller, _ = await self.controller()
+
+        self.assertEqual(controller._claim_smart().id, eligible.id)
+        self.assertIsNone(controller._claim_smart())
+        self.assertEqual(self.state.claim_item(below_reactions.id).id, below_reactions.id)
+
+        self.state.set_setting("min_reactions", "0")
+        self.state.set_setting("min_views", "0")
+        self.assertEqual(controller._claim_smart().id, below_views.id)
+
     async def test_parse_ignores_posts_older_than_fresh_window(self):
         now = datetime.now(timezone.utc)
         client = FakeClient(
@@ -300,6 +382,24 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(published.id, fresh.id)
         self.assertEqual(self.state.queue_item(stale.id).status, "expired")
         self.assertEqual([item.id for item in publisher.calls], [fresh.id])
+
+    async def test_publish_item_claims_exact_manual_choice(self):
+        now = datetime.now(timezone.utc)
+        first = self.state.enqueue(
+            "animeworldmem", "message:1", (1,), "video", 1000, now
+        )
+        chosen = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "video", 1, now
+        )
+        controller, publisher = await self.controller()
+
+        published = await controller.publish_item(chosen.id)
+
+        self.assertEqual(published.id, chosen.id)
+        self.assertEqual([item.id for item in publisher.calls], [chosen.id])
+        self.assertEqual(self.state.queue_item(first.id).status, "pending")
+        with self.assertRaisesRegex(ValueError, "обработан|недоступен"):
+            await controller.publish_item(chosen.id)
 
     async def test_publish_refreshes_activity_before_choosing(self):
         now = datetime.now(timezone.utc)

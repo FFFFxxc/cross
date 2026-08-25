@@ -2,12 +2,14 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from tg_migrator.post_metadata import caption_excerpt, post_metrics
 from tg_migrator.selection import (
     Post,
     latest_posts,
     parse_start_date,
     post_activity,
     post_fingerprint,
+    post_from_messages,
     post_media_kind,
     post_smart_score,
     posts_from_date,
@@ -52,6 +54,45 @@ async def iterator(items):
 
 
 class SelectionTests(unittest.IsolatedAsyncioTestCase):
+    def test_post_metrics_sum_album_counters_and_caption_is_bounded(self):
+        first = message(
+            1,
+            1,
+            text="а" * 20,
+            views=1_000,
+            forwards=7,
+            reactions=SimpleNamespace(
+                results=[SimpleNamespace(count=30), SimpleNamespace(count=15)]
+            ),
+        )
+        second = message(
+            2,
+            1,
+            text="вторая подпись",
+            grouped_id=9,
+            views=2_000,
+            forwards=13,
+            reactions=SimpleNamespace(results=[SimpleNamespace(count=30)]),
+        )
+        first.grouped_id = 9
+        post = post_from_messages((first, second))
+
+        self.assertEqual(post_metrics(post).views, 3_000)
+        self.assertEqual(post_metrics(post).reactions, 75)
+        self.assertEqual(post_metrics(post).forwards, 20)
+        self.assertEqual(caption_excerpt(post, limit=10), "а" * 9 + "…")
+
+    def test_post_metrics_treat_missing_telegram_counters_as_zero(self):
+        post = Post(
+            "message:1",
+            (SimpleNamespace(id=1, date=datetime.now(timezone.utc), raw_text=""),),
+        )
+
+        self.assertEqual(post_metrics(post).views, 0)
+        self.assertEqual(post_metrics(post).reactions, 0)
+        self.assertEqual(post_metrics(post).forwards, 0)
+        self.assertEqual(caption_excerpt(post), "")
+
     def test_sanitizer_removes_every_foreign_link_line(self):
         text = (
             "Обычный текст\n"

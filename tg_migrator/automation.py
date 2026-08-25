@@ -12,6 +12,8 @@ from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
 from .config import AutomationConfig, normalize_peer
+from .post_metadata import caption_excerpt, post_metrics
+from .previews import capture_preview
 from .selection import (
     MOSCOW,
     latest_posts,
@@ -218,7 +220,12 @@ class AutomationController:
             raise ValueError("Такого источника нет. Сначала используйте /add_source.")
         return [peer]
 
-    def _enqueue_posts(self, source: str, posts, limit: int | None = None) -> int:
+    async def _enqueue_posts(
+        self,
+        source: str,
+        posts,
+        limit: int | None = None,
+    ) -> int:
         added = 0
         for post in posts:
             if self._cancel.is_set():
@@ -233,6 +240,17 @@ class AutomationController:
                 fingerprint=post_fingerprint(post),
             )
             if item is not None:
+                metrics = post_metrics(post)
+                preview = await capture_preview(self.client, post.messages)
+                self.state.update_post_metadata(
+                    item.id,
+                    caption_excerpt=caption_excerpt(post),
+                    views_count=metrics.views,
+                    reactions_count=metrics.reactions,
+                    forwards_count=metrics.forwards,
+                    preview_mime=preview.mime_type if preview is not None else None,
+                    preview_data=preview.data if preview is not None else None,
+                )
                 added += 1
                 if limit is not None and added >= limit:
                     break
@@ -274,7 +292,7 @@ class AutomationController:
             )
             if required_kind != "any":
                 posts = [post for post in posts if post_media_kind(post) == required_kind]
-            total += self._enqueue_posts(peer, posts, count - total)
+            total += await self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
         return total
@@ -286,18 +304,24 @@ class AutomationController:
         source: str | None = None,
         end: datetime | None = None,
         top: bool = False,
+        required_kind: str = "any",
     ) -> int:
         total = 0
         for peer in self._selected_sources(source):
             posts = await posts_from_date(self.client.iter_messages(peer), start)
             if end is not None:
                 posts = [post for post in posts if post.published_at < end]
+            if required_kind != "any":
+                posts = [
+                    post for post in posts
+                    if post_media_kind(post) == required_kind
+                ]
             if top:
                 posts.sort(
                     key=lambda post: (post_smart_score(post), post.published_at),
                     reverse=True,
                 )
-            total += self._enqueue_posts(peer, posts, count - total)
+            total += await self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
         return total
@@ -342,6 +366,18 @@ class AutomationController:
         self.state.set_setting("last_published_source", item.source)
         return item
 
+    async def publish_item(self, item_id: str) -> QueueItem:
+        item = self.state.claim_item(item_id)
+        if item is None:
+            raise ValueError("Пост уже обработан или недоступен.")
+        try:
+            await self.publisher.publish(item)
+        except Exception:
+            self.state.release(item.id)
+            raise
+        self.state.set_setting("last_published_source", item.source)
+        return self.state.queue_item(item.id) or item
+
     def _claim_smart(
         self,
         kind: str = "any",
@@ -352,6 +388,14 @@ class AutomationController:
             source,
             limit=max(self.config.scan_limit, self.state.pending_count()),
         )
+        minimum_reactions = self._non_negative_setting("min_reactions")
+        minimum_views = self._non_negative_setting("min_views")
+        candidates = [
+            item
+            for item in candidates
+            if item.reactions_count >= minimum_reactions
+            and item.views_count >= minimum_views
+        ]
         if not candidates:
             return None
         if source is None:
@@ -367,6 +411,12 @@ class AutomationController:
         weights = (10, 6, 3, 2, 1)[: len(candidates)]
         selected = self._rng.choices(candidates, weights=weights, k=1)[0]
         return self.state.claim_item(selected.id)
+
+    def _non_negative_setting(self, key: str) -> int:
+        try:
+            return max(0, int(self.state.get_setting(key, "0") or 0))
+        except (TypeError, ValueError):
+            return 0
 
     async def _refresh_pending_scores(
         self,
@@ -403,7 +453,15 @@ class AutomationController:
                     )
                 )
                 if post is not None:
-                    self.state.update_score(item.id, post_smart_score(post))
+                    metrics = post_metrics(post)
+                    self.state.update_post_metadata(
+                        item.id,
+                        score=post_smart_score(post),
+                        caption_excerpt=caption_excerpt(post),
+                        views_count=metrics.views,
+                        reactions_count=metrics.reactions,
+                        forwards_count=metrics.forwards,
+                    )
 
     async def handle_new_post(self, messages, *, chat_id: int | None = None) -> bool:
         if not messages:
@@ -417,7 +475,7 @@ class AutomationController:
         post = post_from_messages(tuple(messages))
         if post is None:
             return False
-        return self._enqueue_posts(source, [post]) == 1
+        return await self._enqueue_posts(source, [post]) == 1
 
     async def run_due(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(self.timezone)

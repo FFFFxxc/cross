@@ -5,6 +5,7 @@ description = "Safe Telegram post migration with date/count filters and Saved Me
 requires-python = ">=3.11"
 dependencies = [
   "httpx==0.25.2",
+  "Pillow==11.3.0",
   "psycopg[binary]==3.2.9",
   "SQLAlchemy==2.0.43",
   "Telethon==1.44.0",

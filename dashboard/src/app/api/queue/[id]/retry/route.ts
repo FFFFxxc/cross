@@ -1,0 +1,21 @@
+import { privateJson, unauthorized } from "@/lib/api";
+import { createAction } from "@/lib/actions";
+import { hasSession, requireSameOrigin } from "@/lib/auth";
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ id: string }> },
+) {
+  if (!(await hasSession())) return unauthorized();
+  try {
+    requireSameOrigin(request);
+    const { id } = await context.params;
+    const action = await createAction("retry", { item_id: id }, id);
+    return privateJson({ action }, { status: 202 });
+  } catch (error) {
+    return privateJson(
+      { error: error instanceof Error ? error.message : "Не удалось повторить." },
+      { status: 400 },
+    );
+  }
+}

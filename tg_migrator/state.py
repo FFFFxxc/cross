@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, RowMapping
 
 
@@ -15,6 +15,9 @@ from sqlalchemy.engine import Engine, RowMapping
 class Source:
     peer: str
     title: str
+    availability: str = "unknown"
+    checked_at: datetime | None = None
+    error: str | None = None
 
 
 @dataclass(frozen=True, order=True)
@@ -37,6 +40,26 @@ class QueueItem:
     telegram_message_ids: tuple[int, ...]
     max_mid: str | None
     error: str | None
+    caption_excerpt: str
+    views_count: int
+    reactions_count: int
+    forwards_count: int
+    preview_mime: str | None
+    preview_data: bytes | None
+
+
+@dataclass(frozen=True)
+class DashboardAction:
+    id: str
+    kind: str
+    payload: dict[str, object]
+    status: str
+    queue_item_id: str | None
+    result: dict[str, object] | None
+    error: str | None
+    created_at: datetime
+    claimed_at: datetime | None
+    completed_at: datetime | None
 
 
 def _utcnow() -> str:
@@ -63,6 +86,7 @@ class MigrationState:
         self._create_schema()
 
     def _create_schema(self) -> None:
+        binary_type = "BYTEA" if self._engine.dialect.name == "postgresql" else "BLOB"
         statements = (
             """
             CREATE TABLE IF NOT EXISTS transferred_messages (
@@ -125,6 +149,31 @@ class MigrationState:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS automation_actions (
+                id TEXT PRIMARY KEY,
+                action_kind TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                status TEXT NOT NULL,
+                queue_item_id TEXT,
+                result TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                claimed_at TEXT,
+                completed_at TEXT
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS automation_actions_pending
+            ON automation_actions (status, created_at)
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS automation_actions_active_publish
+            ON automation_actions (queue_item_id)
+            WHERE action_kind = 'publish_now'
+              AND status IN ('pending', 'processing')
+              AND queue_item_id IS NOT NULL
+            """,
+            """
             CREATE INDEX IF NOT EXISTS automation_queue_claim
             ON automation_queue (status, media_kind, score, published_at)
             """,
@@ -132,6 +181,35 @@ class MigrationState:
         with self._engine.begin() as connection:
             for statement in statements:
                 connection.execute(text(statement))
+            migrations = {
+                "automation_sources": {
+                    "availability": "TEXT NOT NULL DEFAULT 'unknown'",
+                    "checked_at": "TEXT",
+                    "error": "TEXT",
+                },
+                "automation_queue": {
+                    "caption_excerpt": "TEXT NOT NULL DEFAULT ''",
+                    "views_count": "INTEGER NOT NULL DEFAULT 0",
+                    "reactions_count": "INTEGER NOT NULL DEFAULT 0",
+                    "forwards_count": "INTEGER NOT NULL DEFAULT 0",
+                    "preview_mime": "TEXT",
+                    "preview_data": binary_type,
+                },
+            }
+            inspector = inspect(connection)
+            for table_name, columns in migrations.items():
+                existing = {
+                    str(column["name"])
+                    for column in inspector.get_columns(table_name)
+                }
+                for column_name, definition in columns.items():
+                    if column_name not in existing:
+                        connection.execute(
+                            text(
+                                f"ALTER TABLE {table_name} "
+                                f"ADD COLUMN {column_name} {definition}"
+                            )
+                        )
 
     def close(self) -> None:
         self._engine.dispose()
@@ -231,9 +309,55 @@ class MigrationState:
     def sources(self) -> list[Source]:
         with self._engine.connect() as connection:
             rows = connection.execute(
-                text("SELECT peer, title FROM automation_sources ORDER BY added_at, peer")
+                text(
+                    """
+                    SELECT peer, title, availability, checked_at, error
+                    FROM automation_sources ORDER BY added_at, peer
+                    """
+                )
             )
-            return [Source(str(row.peer), str(row.title)) for row in rows]
+            return [
+                Source(
+                    peer=str(row.peer),
+                    title=str(row.title),
+                    availability=str(row.availability),
+                    checked_at=(
+                        datetime.fromisoformat(str(row.checked_at))
+                        if row.checked_at is not None
+                        else None
+                    ),
+                    error=str(row.error) if row.error is not None else None,
+                )
+                for row in rows
+            ]
+
+    def update_source_availability(
+        self,
+        peer: str,
+        availability: str,
+        error: str | None = None,
+    ) -> bool:
+        if availability not in {"unknown", "available", "unavailable"}:
+            raise ValueError("Доступность: unknown, available или unavailable.")
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_sources
+                    SET availability = :availability,
+                        checked_at = :checked_at,
+                        error = :error
+                    WHERE peer = :peer
+                    """
+                ),
+                {
+                    "peer": str(peer),
+                    "availability": availability,
+                    "checked_at": _utcnow(),
+                    "error": error[:1000] if error is not None else None,
+                },
+            )
+            return result.rowcount == 1
 
     def set_setting(self, key: str, value: str) -> None:
         with self._engine.begin() as connection:
@@ -389,6 +513,20 @@ class MigrationState:
             telegram_message_ids=tuple(int(value) for value in telegram_ids),
             max_mid=str(row["max_mid"]) if row["max_mid"] is not None else None,
             error=str(row["error"]) if row["error"] is not None else None,
+            caption_excerpt=str(row["caption_excerpt"]),
+            views_count=int(row["views_count"]),
+            reactions_count=int(row["reactions_count"]),
+            forwards_count=int(row["forwards_count"]),
+            preview_mime=(
+                str(row["preview_mime"])
+                if row["preview_mime"] is not None
+                else None
+            ),
+            preview_data=(
+                bytes(row["preview_data"])
+                if row["preview_data"] is not None
+                else None
+            ),
         )
 
     def queue_item(self, item_id: str) -> QueueItem | None:
@@ -438,6 +576,60 @@ class MigrationState:
                     """
                 ),
                 {"id": item_id, "score": int(score)},
+            )
+            return result.rowcount == 1
+
+    def update_post_metadata(
+        self,
+        item_id: str,
+        *,
+        score: int | None = None,
+        caption_excerpt: str | None = None,
+        views_count: int | None = None,
+        reactions_count: int | None = None,
+        forwards_count: int | None = None,
+        preview_mime: str | None = None,
+        preview_data: bytes | None = None,
+    ) -> bool:
+        if preview_data is not None and len(preview_data) > 131_072:
+            raise ValueError("Превью не может быть больше 131072 байт.")
+        counters = {
+            "views_count": views_count,
+            "reactions_count": reactions_count,
+            "forwards_count": forwards_count,
+        }
+        if any(value is not None and int(value) < 0 for value in counters.values()):
+            raise ValueError("Счётчики публикации не могут быть отрицательными.")
+
+        values: dict[str, object] = {"id": item_id}
+        assignments: list[str] = []
+        if score is not None:
+            assignments.append("score = :score")
+            values["score"] = int(score)
+        if caption_excerpt is not None:
+            assignments.append("caption_excerpt = :caption_excerpt")
+            values["caption_excerpt"] = caption_excerpt[:2000]
+        for name, value in counters.items():
+            if value is not None:
+                assignments.append(f"{name} = :{name}")
+                values[name] = int(value)
+        if preview_mime is not None:
+            assignments.append("preview_mime = :preview_mime")
+            values["preview_mime"] = preview_mime[:100]
+        if preview_data is not None:
+            assignments.append("preview_data = :preview_data")
+            values["preview_data"] = preview_data
+        if not assignments:
+            return self.queue_item(item_id) is not None
+
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    "UPDATE automation_queue SET "
+                    + ", ".join(assignments)
+                    + " WHERE id = :id"
+                ),
+                values,
             )
             return result.rowcount == 1
 
@@ -636,3 +828,179 @@ class MigrationState:
                 },
             )
             return result.rowcount == 1
+
+    @staticmethod
+    def _dashboard_action(row: RowMapping | None) -> DashboardAction | None:
+        if row is None:
+            return None
+
+        def parsed_at(name: str) -> datetime | None:
+            value = row[name]
+            return datetime.fromisoformat(str(value)) if value is not None else None
+
+        result = json.loads(row["result"]) if row["result"] is not None else None
+        return DashboardAction(
+            id=str(row["id"]),
+            kind=str(row["action_kind"]),
+            payload=dict(json.loads(row["payload"])),
+            status=str(row["status"]),
+            queue_item_id=(
+                str(row["queue_item_id"])
+                if row["queue_item_id"] is not None
+                else None
+            ),
+            result=dict(result) if result is not None else None,
+            error=str(row["error"]) if row["error"] is not None else None,
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            claimed_at=parsed_at("claimed_at"),
+            completed_at=parsed_at("completed_at"),
+        )
+
+    def action(self, action_id: str) -> DashboardAction | None:
+        with self._engine.connect() as connection:
+            row = connection.execute(
+                text("SELECT * FROM automation_actions WHERE id = :id"),
+                {"id": action_id},
+            ).mappings().one_or_none()
+            return self._dashboard_action(row)
+
+    def enqueue_action(
+        self,
+        kind: str,
+        payload: dict[str, object],
+        *,
+        queue_item_id: str | None = None,
+    ) -> DashboardAction | None:
+        if not kind.strip():
+            raise ValueError("Тип действия не может быть пустым.")
+        action_id = uuid.uuid4().hex[:16]
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    INSERT INTO automation_actions (
+                        id, action_kind, payload, status, queue_item_id, created_at
+                    ) VALUES (
+                        :id, :kind, :payload, 'pending', :queue_item_id, :created_at
+                    )
+                    ON CONFLICT DO NOTHING
+                    """
+                ),
+                {
+                    "id": action_id,
+                    "kind": kind.strip(),
+                    "payload": json.dumps(payload, ensure_ascii=False),
+                    "queue_item_id": queue_item_id,
+                    "created_at": _utcnow(),
+                },
+            )
+            if result.rowcount != 1:
+                return None
+        return self.action(action_id)
+
+    def claim_action(self) -> DashboardAction | None:
+        with self._engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT * FROM automation_actions
+                    WHERE status = 'pending'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                return None
+            claimed_at = _utcnow()
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_actions
+                    SET status = 'processing', claimed_at = :claimed_at, error = NULL
+                    WHERE id = :id AND status = 'pending'
+                    """
+                ),
+                {"id": row["id"], "claimed_at": claimed_at},
+            )
+            if result.rowcount != 1:
+                return None
+            updated = dict(row)
+            updated["status"] = "processing"
+            updated["claimed_at"] = claimed_at
+            updated["error"] = None
+            return self._dashboard_action(updated)
+
+    def complete_action(
+        self,
+        action_id: str,
+        result: dict[str, object],
+    ) -> bool:
+        with self._engine.begin() as connection:
+            updated = connection.execute(
+                text(
+                    """
+                    UPDATE automation_actions
+                    SET status = 'completed', result = :result,
+                        error = NULL, completed_at = :completed_at
+                    WHERE id = :id AND status = 'processing'
+                    """
+                ),
+                {
+                    "id": action_id,
+                    "result": json.dumps(result, ensure_ascii=False),
+                    "completed_at": _utcnow(),
+                },
+            )
+            return updated.rowcount == 1
+
+    def fail_action(self, action_id: str, error: str) -> bool:
+        with self._engine.begin() as connection:
+            updated = connection.execute(
+                text(
+                    """
+                    UPDATE automation_actions
+                    SET status = 'failed', error = :error,
+                        completed_at = :completed_at
+                    WHERE id = :id AND status = 'processing'
+                    """
+                ),
+                {
+                    "id": action_id,
+                    "error": error[:1000],
+                    "completed_at": _utcnow(),
+                },
+            )
+            return updated.rowcount == 1
+
+    def recent_actions(self, limit: int = 50) -> list[DashboardAction]:
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    """
+                    SELECT * FROM automation_actions
+                    ORDER BY created_at DESC, id DESC
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": max(1, min(int(limit), 200))},
+            ).mappings()
+            return [self._dashboard_action(row) for row in rows]
+
+    def skip_item(self, item_id: str) -> bool:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue SET status = 'skipped', error = NULL
+                    WHERE id = :id AND status = 'pending'
+                    """
+                ),
+                {"id": item_id},
+            )
+            return result.rowcount == 1
+
+    def touch_worker_heartbeat(self) -> datetime:
+        heartbeat = datetime.now(timezone.utc)
+        self.set_setting("worker_heartbeat_at", heartbeat.isoformat())
+        return heartbeat

@@ -9,6 +9,8 @@ import re
 from typing import Any, AsyncIterator
 from zoneinfo import ZoneInfo
 
+from .post_metadata import post_metrics
+
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 _VISIBLE_LINK_RE = re.compile(
@@ -304,14 +306,10 @@ def post_activity(post: Post) -> int:
 
 def post_smart_score(post: Post, now: datetime | None = None) -> int:
     """Rank reach, engagement quality and freshness on one stable scale."""
-    views = 0
-    forwards = 0
-    reactions = 0
-    for message in post.messages:
-        views += int(getattr(message, "views", 0) or 0)
-        forwards += int(getattr(message, "forwards", 0) or 0)
-        results = getattr(getattr(message, "reactions", None), "results", None) or ()
-        reactions += sum(int(getattr(value, "count", 0) or 0) for value in results)
+    metrics = post_metrics(post)
+    views = metrics.views
+    reactions = metrics.reactions
+    forwards = metrics.forwards
 
     engagement_base = max(views, 100)
     score = (
