@@ -1,0 +1,92 @@
+:root {
+  --bg: #0c1018;
+  --panel: #151b27;
+  --panel-2: #1b2332;
+  --line: #2a3446;
+  --text: #f3f6fb;
+  --muted: #9aa7ba;
+  --accent: #7c5cff;
+  --accent-2: #a78bfa;
+  --green: #36d399;
+  --orange: #fbbf24;
+  --red: #fb7185;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
+body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+button, input, select { font: inherit; }
+button, .button, input, select { min-height: 44px; }
+button, .button { border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px; background: var(--panel-2); color: var(--text); cursor: pointer; text-decoration: none; }
+button:hover, .button:hover { border-color: var(--accent-2); }
+button:disabled { cursor: wait; opacity: .65; }
+button.primary, .button.primary { background: linear-gradient(135deg, var(--accent), #5a3ee6); border-color: transparent; font-weight: 750; }
+:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+
+.app-layout { min-height: 100vh; }
+.topbar { height: 66px; display: flex; align-items: center; gap: 12px; padding: 0 max(20px, calc((100vw - 1400px) / 2)); border-bottom: 1px solid var(--line); background: rgba(12,16,24,.86); backdrop-filter: blur(18px); position: sticky; top: 0; z-index: 20; }
+.brand { color: var(--text); font-size: 22px; font-weight: 900; text-decoration: none; letter-spacing: -.04em; }
+.brand-subtitle { color: var(--muted); font-size: 13px; }
+.nav { display: flex; gap: 5px; padding: 12px max(20px, calc((100vw - 1400px) / 2)); overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+.nav a { color: var(--muted); text-decoration: none; white-space: nowrap; padding: 10px 13px; border-radius: 10px; }
+.nav a:hover, .nav a.active { color: var(--text); background: var(--panel-2); }
+.content { width: min(1400px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 70px; }
+.hero, .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+.hero { padding: 34px; border: 1px solid var(--line); border-radius: 24px; background: radial-gradient(circle at 80% 10%, rgba(124,92,255,.28), transparent 35%), var(--panel); }
+h1 { margin: 3px 0 8px; font-size: clamp(30px, 5vw, 52px); letter-spacing: -.045em; }
+h2 { letter-spacing: -.025em; }
+.eyebrow { color: var(--accent-2); text-transform: uppercase; letter-spacing: .13em; font-size: 12px; font-weight: 800; margin: 0; }
+.hero p, .source, .date { color: var(--muted); }
+.status-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.status-card, .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+.status-card p { color: var(--muted); margin: 0 0 12px; }
+.status-card strong { font-size: 28px; }
+.status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; float: right; background: var(--muted); }
+.status-dot.active { background: var(--green); box-shadow: 0 0 16px var(--green); }
+.status-dot.delayed { background: var(--orange); }
+.status-dot.offline { background: var(--red); }
+.panel { margin-top: 16px; }
+
+.queue-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.queue-controls label { color: var(--muted); font-size: 12px; font-weight: 700; }
+input, select { width: 100%; margin-top: 6px; border: 1px solid var(--line); border-radius: 11px; padding: 0 12px; color: var(--text); background: var(--panel); }
+.queue-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
+.queue-card { overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; min-width: 0; }
+.preview { position: relative; height: 230px; background: linear-gradient(135deg, #232d3e, #131924); display: grid; place-items: center; color: var(--muted); font-weight: 800; }
+.preview img { object-fit: cover; }
+.queue-body { padding: 18px; }
+.queue-body h2 { font-size: 18px; line-height: 1.35; margin: 12px 0 6px; overflow-wrap: anywhere; }
+.badges { display: flex; gap: 7px; }
+.badges span { color: #c7bfff; border: 1px solid #423676; background: #241f42; padding: 4px 8px; border-radius: 999px; font-size: 11px; text-transform: uppercase; }
+.source, .date { font-size: 12px; overflow-wrap: anywhere; }
+.metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 16px 0; }
+.metrics div { background: var(--panel-2); border-radius: 10px; padding: 9px; min-width: 0; }
+.metrics dt { color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.metrics dd { margin: 4px 0 0; font-weight: 800; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+.action-wrap { display: grid; gap: 4px; flex: 1 1 130px; }
+.action-wrap button { width: 100%; }
+.action-wrap small, .error { color: var(--red); }
+.notice { padding: 18px; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; }
+.load-more { display: block; margin: 24px auto 0; }
+
+body > main:only-child { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+body > main:only-child form { width: min(420px, 100%); display: grid; gap: 12px; border: 1px solid var(--line); background: var(--panel); border-radius: 20px; padding: 28px; }
+
+@media (max-width: 900px) {
+  .queue-grid, .status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .queue-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .content { width: min(100% - 24px, 1400px); padding-top: 22px; }
+  .topbar { padding-inline: 14px; }
+  .nav { padding-inline: 8px; }
+  .hero, .page-heading { align-items: stretch; flex-direction: column; }
+  .hero { padding: 22px; }
+  .hero .button { text-align: center; }
+  .queue-grid, .status-grid, .queue-controls { grid-template-columns: 1fr; }
+  .preview { height: 220px; }
+  h1 { font-size: 34px; }
+}
