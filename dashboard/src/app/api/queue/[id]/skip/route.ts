@@ -16,7 +16,7 @@ export async function POST(
   const { id } = await context.params;
   const rows = await query<Row>(
     `UPDATE automation_queue SET status = 'skipped', error = NULL
-     WHERE id = $1 AND status = 'pending' RETURNING id, status`,
+     WHERE id = $1 AND status IN ('pending', 'candidate') RETURNING id, status`,
     [id],
   );
   if (!rows[0]) return privateJson({ error: "Пост уже обработан." }, { status: 409 });

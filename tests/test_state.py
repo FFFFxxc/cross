@@ -240,6 +240,18 @@ class StateTests(unittest.TestCase):
             self.assertTrue(state.skip_item(item.id))
             self.assertFalse(state.skip_item(item.id))
             self.assertEqual(state.queue_item(item.id).status, "skipped")
+
+            candidate = state.enqueue(
+                "source",
+                "message:2",
+                (2,),
+                "image",
+                20,
+                datetime.now(timezone.utc),
+                status="candidate",
+            )
+            self.assertTrue(state.skip_item(candidate.id))
+            self.assertEqual(state.queue_item(candidate.id).status, "skipped")
             self.assertEqual(state.recent_actions(1)[0].id, failed.id)
 
             heartbeat = state.touch_worker_heartbeat()
