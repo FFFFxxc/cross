@@ -97,6 +97,7 @@ class AutomationController:
         self.account_id: int | None = None
         self._chat_sources: dict[int, str] = {}
         self._cancel = asyncio.Event()
+        self._metadata_refresh_lock = asyncio.Lock()
 
     def _fresh_days(self) -> int:
         return int(self.state.get_setting("fresh_days", str(self.config.fresh_days)))
@@ -251,6 +252,7 @@ class AutomationController:
                     metrics_known=metrics.known,
                     preview_mime=preview.mime_type if preview is not None else None,
                     preview_data=preview.data if preview is not None else None,
+                    preview_checked_at=datetime.now(timezone.utc),
                 )
                 added += 1
                 if limit is not None and added >= limit:
@@ -490,11 +492,30 @@ class AutomationController:
         kind: str = "any",
         source: str | None = None,
     ) -> None:
-        items = self.state.pool_items(
+        async with self._metadata_refresh_lock:
+            await self._refresh_pending_scores_unlocked(kind, source)
+
+    async def _refresh_pending_scores_unlocked(
+        self,
+        kind: str,
+        source: str | None,
+    ) -> None:
+        score_items = self.state.pool_items(
             kind,
             source,
             limit=self.config.scan_limit * max(1, len(self.state.sources())),
         )
+        preview_items = self.state.items_missing_previews(
+            kind,
+            source,
+            limit=max(self.config.queue_minimum, self.config.scan_limit),
+        )
+        items = list(
+            {item.id: item for item in [*score_items, *preview_items]}.values()
+        )
+        missing_preview_ids = {
+            item.id for item in items if item.preview_data is None
+        }
         by_source: dict[str, list[QueueItem]] = {}
         for item in items:
             by_source.setdefault(item.source, []).append(item)
@@ -509,6 +530,13 @@ class AutomationController:
             try:
                 messages = await self.client.get_messages(peer, ids=message_ids)
             except Exception:
+                checked_at = datetime.now(timezone.utc)
+                for item in source_items:
+                    if item.id in missing_preview_ids:
+                        self.state.update_post_metadata(
+                            item.id,
+                            preview_checked_at=checked_at,
+                        )
                 continue
             messages_by_id = {
                 int(message.id): message
@@ -525,6 +553,16 @@ class AutomationController:
                 )
                 if post is not None:
                     metrics = post_metrics(post)
+                    preview = (
+                        await capture_preview(self.client, post.messages)
+                        if item.preview_data is None
+                        else None
+                    )
+                    preview_checked_at = (
+                        datetime.now(timezone.utc)
+                        if item.preview_data is None
+                        else None
+                    )
                     self.state.update_post_metadata(
                         item.id,
                         score=post_smart_score(post),
@@ -533,6 +571,18 @@ class AutomationController:
                         reactions_count=metrics.reactions,
                         forwards_count=metrics.forwards,
                         metrics_known=metrics.known,
+                        preview_mime=(
+                            preview.mime_type if preview is not None else None
+                        ),
+                        preview_data=(
+                            preview.data if preview is not None else None
+                        ),
+                        preview_checked_at=preview_checked_at,
+                    )
+                elif item.id in missing_preview_ids:
+                    self.state.update_post_metadata(
+                        item.id,
+                        preview_checked_at=datetime.now(timezone.utc),
                     )
 
     async def handle_new_post(self, messages, *, chat_id: int | None = None) -> bool:
