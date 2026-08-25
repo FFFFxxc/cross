@@ -1,5 +1,5 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession, requireSameOrigin } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
+import { requireSameOrigin } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 type Row = { id: string; status: string };
@@ -8,7 +8,6 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!(await hasSession())) return unauthorized();
   try {
     requireSameOrigin(request);
   } catch {

@@ -1,5 +1,4 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
 import { query } from "@/lib/db";
 
 type ActionRow = {
@@ -29,7 +28,6 @@ function actionJson(row: ActionRow) {
 }
 
 export async function GET(request: Request) {
-  if (!(await hasSession())) return unauthorized();
   const rawLimit = Number(new URL(request.url).searchParams.get("limit") || 50);
   const limit = Number.isInteger(rawLimit) ? Math.max(1, Math.min(100, rawLimit)) : 50;
   const rows = await query<ActionRow>(

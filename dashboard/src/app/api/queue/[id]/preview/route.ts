@@ -1,5 +1,4 @@
-import { hasSession } from "@/lib/auth";
-import { PRIVATE_HEADERS, unauthorized } from "@/lib/api";
+import { PRIVATE_HEADERS } from "@/lib/api";
 import { query } from "@/lib/db";
 
 type PreviewRow = { preview_mime: string | null; preview_data: Buffer | null };
@@ -8,7 +7,6 @@ export async function GET(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!(await hasSession())) return unauthorized();
   const { id } = await context.params;
   const rows = await query<PreviewRow>(
     "SELECT preview_mime, preview_data FROM automation_queue WHERE id = $1",

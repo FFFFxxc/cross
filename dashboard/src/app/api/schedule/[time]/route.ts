@@ -1,13 +1,12 @@
-import { privateJson, unauthorized } from "@/lib/api";
+import { privateJson } from "@/lib/api";
 import { scheduleInput } from "@/lib/actions";
-import { hasSession, requireSameOrigin } from "@/lib/auth";
+import { requireSameOrigin } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 export async function DELETE(
   request: Request,
   context: { params: Promise<{ time: string }> },
 ) {
-  if (!(await hasSession())) return unauthorized();
   try {
     requireSameOrigin(request);
     const { time } = await context.params;

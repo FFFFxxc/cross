@@ -1,13 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  hasSession: vi.fn(),
   query: vi.fn(),
 }));
-vi.mock("@/lib/auth", async (importOriginal) => {
-  const original = await importOriginal<typeof import("@/lib/auth")>();
-  return { ...original, hasSession: mocks.hasSession };
-});
 vi.mock("@/lib/db", () => ({ query: mocks.query }));
 
 import { PUT } from "./route";
@@ -22,7 +17,6 @@ function request(body: unknown, origin = "https://panel.example") {
 
 describe("settings mutation", () => {
   beforeEach(() => {
-    mocks.hasSession.mockResolvedValue(true);
     mocks.query.mockReset().mockResolvedValue([]);
   });
 
@@ -42,5 +36,11 @@ describe("settings mutation", () => {
     expect(values).toContain("fresh_days");
     expect(values).toContain("min_reactions");
     expect(values).not.toContain("ignoredSecret");
+  });
+
+  it("allows a same-origin mutation without a session", async () => {
+    const response = await PUT(request({ freshDays: 7 }));
+    expect(response.status).toBe(200);
+    expect(mocks.query).toHaveBeenCalled();
   });
 });

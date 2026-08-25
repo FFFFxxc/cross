@@ -1,30 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  hasSession: vi.fn(),
   query: vi.fn(),
 }));
 
-vi.mock("@/lib/auth", () => ({ hasSession: mocks.hasSession }));
 vi.mock("@/lib/db", () => ({ query: mocks.query }));
 
 import { GET } from "./route";
 
 describe("queue route", () => {
   beforeEach(() => {
-    mocks.hasSession.mockReset();
     mocks.query.mockReset();
   });
 
-  it("returns 401 without a valid session", async () => {
-    mocks.hasSession.mockResolvedValue(false);
+  it("returns queue data without a session", async () => {
+    mocks.query.mockResolvedValue([]);
     const response = await GET(new Request("https://panel.example/api/queue"));
-    expect(response.status).toBe(401);
-    expect(mocks.query).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(mocks.query).toHaveBeenCalled();
   });
 
   it("returns sanitized legacy-compatible rows and a cursor", async () => {
-    mocks.hasSession.mockResolvedValue(true);
     mocks.query.mockResolvedValue([
       {
         id: "item-1",
@@ -63,7 +59,6 @@ describe("queue route", () => {
   });
 
   it("returns 400 for invalid query values", async () => {
-    mocks.hasSession.mockResolvedValue(true);
     const response = await GET(
       new Request("https://panel.example/api/queue?sort=DROP%20TABLE"),
     );

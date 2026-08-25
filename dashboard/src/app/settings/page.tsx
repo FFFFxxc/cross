@@ -1,9 +1,7 @@
 import { AppShell } from "@/components/app-shell";
 import { SettingsLoader } from "@/components/settings-loader";
-import { requireSession } from "@/lib/auth";
 
-export default async function SettingsPage() {
-  await requireSession();
+export default function SettingsPage() {
   return (
     <AppShell>
       <div className="page-heading"><div><p className="eyebrow">Автоматика</p><h1>Настройки</h1></div></div>

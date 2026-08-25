@@ -17,7 +17,7 @@ const queueItem = {
   error: null,
 };
 
-test("login, visual queue controls and safe settings work on desktop and mobile", async ({ page }) => {
+test("public queue controls and safe settings work on desktop and mobile", async ({ page }) => {
   const consoleErrors: string[] = [];
   const queueRequests: string[] = [];
   page.on("console", (message) => {
@@ -65,17 +65,9 @@ test("login, visual queue controls and safe settings work on desktop and mobile"
     json: { action: { id: "scan-e2e", status: "pending" } },
   }));
 
-  await page.goto("/login");
-  await page.getByLabel("Пароль").fill("e2e-password");
-  const [loginResponse] = await Promise.all([
-    page.waitForResponse((response) => response.url().endsWith("/api/session/login")),
-    page.getByRole("button", { name: "Войти" }).click(),
-  ]);
-  expect(
-    loginResponse.status(),
-    `login response: ${await loginResponse.text()}; request: ${loginResponse.request().url()} ${JSON.stringify(await loginResponse.request().allHeaders())}`,
-  ).toBe(200);
+  await page.goto("/");
   await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByLabel("Пароль")).toHaveCount(0);
   await expect(page.getByText("Работает")).toBeVisible();
 
   await page.getByRole("link", { name: "Очередь", exact: true }).click();

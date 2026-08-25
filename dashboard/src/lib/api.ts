@@ -10,7 +10,3 @@ export function privateJson(body: unknown, init: ResponseInit = {}) {
     headers: { ...PRIVATE_HEADERS, ...init.headers },
   });
 }
-
-export function unauthorized() {
-  return privateJson({ error: "Требуется вход." }, { status: 401 });
-}

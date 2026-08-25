@@ -1,5 +1,4 @@
 import { QueueClient } from "@/components/queue-client";
-import { requireSession } from "@/lib/auth";
 
 export { QueueClient } from "@/components/queue-client";
 
@@ -8,7 +7,6 @@ export default async function QueuePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireSession();
   const raw = await searchParams;
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(raw)) {

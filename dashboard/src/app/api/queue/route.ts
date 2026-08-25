@@ -1,5 +1,4 @@
-import { hasSession } from "@/lib/auth";
-import { privateJson, unauthorized } from "@/lib/api";
+import { privateJson } from "@/lib/api";
 import { query } from "@/lib/db";
 import { buildQueueQuery, parseQueueFilters } from "@/lib/queue-query";
 
@@ -22,7 +21,6 @@ type QueueRow = {
 };
 
 export async function GET(request: Request) {
-  if (!(await hasSession())) return unauthorized();
   try {
     const filters = parseQueueFilters(new URL(request.url).searchParams);
     const built = buildQueueQuery(filters);

@@ -14,13 +14,11 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     command: "npm run dev -- --hostname 127.0.0.1 --port 3100",
-    url: "http://127.0.0.1:3100/login",
+    url: "http://127.0.0.1:3100/",
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
       DATABASE_URL: "postgresql://e2e:e2e@127.0.0.1/e2e",
-      ADMIN_PASSWORD_HASH: "$2b$04$9efEjALnPXBhjl5V/2TGse0AxPGLnJb.43.9.4yJyKS5D1mhWiPBa",
-      AUTH_SECRET: "e2e-auth-secret-that-is-longer-than-32-characters",
     },
   },
 });

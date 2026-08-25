@@ -1,4 +1,5 @@
 import { Pool, type QueryResultRow } from "pg";
+import { connection } from "next/server";
 
 import { getEnv } from "./env";
 
@@ -22,6 +23,7 @@ export async function query<T extends QueryResultRow>(
   sql: string,
   values: readonly unknown[] = [],
 ): Promise<T[]> {
+  await connection();
   const result = await pool().query<T>(sql, [...values]);
   return result.rows;
 }
