@@ -5,9 +5,9 @@ import { buildQueueQuery, parseQueueFilters } from "./queue-query";
 describe("queue query", () => {
   it.each([
     ["newest", "published_at DESC, id DESC"],
+    ["score", "score DESC, published_at DESC"],
     ["reactions", "reactions_count DESC, published_at DESC"],
     ["views", "views_count DESC, published_at DESC"],
-    ["score", "score DESC, published_at DESC"],
   ])("maps %s to a fixed order", (sort, order) => {
     const filters = parseQueueFilters(new URLSearchParams({ sort }));
     expect(buildQueueQuery(filters).sql).toContain(`ORDER BY ${order}`);

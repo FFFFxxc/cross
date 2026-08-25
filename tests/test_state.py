@@ -300,6 +300,32 @@ class StateTests(unittest.TestCase):
             self.assertTrue(state.claim_slot(date(2026, 8, 15), "14:00"))
             state.close()
 
+    def test_candidate_pool_promotes_only_selected_top_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            first = state.enqueue(
+                "source-a", "message:1", (1,), "image", 100,
+                datetime.now(timezone.utc), status="candidate",
+            )
+            second = state.enqueue(
+                "source-b", "message:2", (2,), "video", 90,
+                datetime.now(timezone.utc), status="candidate",
+            )
+            extra = state.enqueue(
+                "source-a", "message:3", (3,), "image", 1,
+                datetime.now(timezone.utc), status="pending",
+            )
+
+            state.rebalance_pending([first.id, second.id])
+
+            self.assertEqual(
+                {item.id for item in state.pending_items()},
+                {first.id, second.id},
+            )
+            self.assertEqual(state.queue_item(extra.id).status, "candidate")
+            self.assertEqual(len(state.pool_items()), 3)
+            state.close()
+
 
 if __name__ == "__main__":
     unittest.main()

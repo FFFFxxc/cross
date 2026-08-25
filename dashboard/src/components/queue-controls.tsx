@@ -11,7 +11,7 @@ export function QueueControls({
     <div className="queue-controls">
       <label>
         Сортировка
-        <select value={params.get("sort") || "newest"} onChange={(event) => onChange("sort", event.target.value)}>
+        <select value={params.get("sort") || "score"} onChange={(event) => onChange("sort", event.target.value)}>
           <option value="newest">Сначала новые</option>
           <option value="reactions">По реакциям</option>
           <option value="views">По просмотрам</option>
@@ -36,6 +36,7 @@ export function QueueControls({
           <option value="ambiguous">Нужна проверка</option>
           <option value="skipped">Пропущено</option>
           <option value="expired">Устарело</option>
+          <option value="candidate">Все кандидаты</option>
         </select>
       </label>
       <label>

@@ -15,6 +15,7 @@ type QueueRow = {
   views_count: number | string | null;
   reactions_count: number | string | null;
   forwards_count: number | string | null;
+  metrics_known: boolean | number | string | null;
   preview_mime: string | null;
   error: string | null;
   total_count: number | string;
@@ -39,6 +40,7 @@ export async function GET(request: Request) {
       viewsCount: Number(row.views_count || 0),
       reactionsCount: Number(row.reactions_count || 0),
       forwardsCount: Number(row.forwards_count || 0),
+      metricsKnown: Boolean(Number(row.metrics_known || 0)),
       hasPreview: Boolean(row.preview_mime),
       error: row.error,
     }));

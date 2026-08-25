@@ -18,6 +18,7 @@ const item = {
   viewsCount: 12_500,
   reactionsCount: 430,
   forwardsCount: 55,
+  metricsKnown: true,
   hasPreview: true,
   error: null,
 };

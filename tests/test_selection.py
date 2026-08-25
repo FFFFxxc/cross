@@ -91,7 +91,16 @@ class SelectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(post_metrics(post).views, 0)
         self.assertEqual(post_metrics(post).reactions, 0)
         self.assertEqual(post_metrics(post).forwards, 0)
+        self.assertFalse(post_metrics(post).known)
         self.assertEqual(caption_excerpt(post), "")
+
+    def test_post_metrics_marks_real_counters_as_known_even_when_zero(self):
+        post = Post(
+            "message:1",
+            (message(1, 1, views=0, forwards=0, reactions=SimpleNamespace(results=[])),),
+        )
+
+        self.assertTrue(post_metrics(post).known)
 
     def test_sanitizer_removes_every_foreign_link_line(self):
         text = (

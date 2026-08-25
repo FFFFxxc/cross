@@ -22,6 +22,7 @@ const STATUSES = new Set<QueueStatus>([
   "ambiguous",
   "skipped",
   "expired",
+  "candidate",
 ]);
 
 function integer(value: string | null, fallback: number): number {
@@ -31,7 +32,7 @@ function integer(value: string | null, fallback: number): number {
 }
 
 export function parseQueueFilters(params: URLSearchParams): QueueFilters {
-  const sort = params.get("sort") || "newest";
+  const sort = params.get("sort") || "score";
   const media = params.get("media") || "any";
   const status = params.get("status") || "pending";
   if (!SORTS.has(sort)) throw new Error("Неизвестная сортировка.");
@@ -73,7 +74,7 @@ export function buildQueueQuery(filters: QueueFilters): {
     sql: `
       SELECT id, source, post_key, message_ids, media_kind, score,
              published_at, status, caption_excerpt, views_count,
-             reactions_count, forwards_count, preview_mime, error,
+             reactions_count, forwards_count, metrics_known, preview_mime, error,
              COUNT(*) OVER() AS total_count
       FROM automation_queue
       WHERE ${clauses.join(" AND ")}

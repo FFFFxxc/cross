@@ -7,7 +7,8 @@ export type QueueStatus =
   | "failed"
   | "ambiguous"
   | "skipped"
-  | "expired";
+  | "expired"
+  | "candidate";
 
 export interface QueueFilters {
   sort: QueueSort;
