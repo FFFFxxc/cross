@@ -304,12 +304,18 @@ class AutomationController:
         source: str | None = None,
         end: datetime | None = None,
         top: bool = False,
+        required_kind: str = "any",
     ) -> int:
         total = 0
         for peer in self._selected_sources(source):
             posts = await posts_from_date(self.client.iter_messages(peer), start)
             if end is not None:
                 posts = [post for post in posts if post.published_at < end]
+            if required_kind != "any":
+                posts = [
+                    post for post in posts
+                    if post_media_kind(post) == required_kind
+                ]
             if top:
                 posts.sort(
                     key=lambda post: (post_smart_score(post), post.published_at),

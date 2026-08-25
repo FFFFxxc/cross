@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from tg_migrator.dashboard_actions import DashboardActionRunner
+from tg_migrator.selection import MOSCOW
 from tg_migrator.state import MigrationState
 
 
@@ -23,6 +24,7 @@ class FakeController:
         self.publisher = SimpleNamespace(max_client=FakeMaxClient())
         self.published = []
         self.scans = []
+        self.period_scans = []
 
     async def publish_item(self, item_id):
         self.published.append(item_id)
@@ -41,6 +43,17 @@ class FakeController:
     async def parse_latest(self, count, source=None, *, required_kind="any"):
         self.scans.append((count, source, required_kind))
         return 4
+
+    async def parse_from(
+        self,
+        start,
+        count,
+        source=None,
+        end=None,
+        required_kind="any",
+    ):
+        self.period_scans.append((start, end, count, source, required_kind))
+        return 3
 
 
 class DashboardActionTests(unittest.IsolatedAsyncioTestCase):
@@ -119,6 +132,26 @@ class DashboardActionTests(unittest.IsolatedAsyncioTestCase):
         source = next(source for source in self.state.sources() if source.peer == "bad-source")
         self.assertEqual(source.availability, "unavailable")
         self.assertIn("denied", source.error)
+
+    async def test_period_scan_passes_dates_and_media_kind(self):
+        action = self.state.enqueue_action(
+            "scan",
+            {
+                "count": 20,
+                "source": "anime",
+                "kind": "image",
+                "start": "2026-08-01",
+                "end": "2026-08-05",
+            },
+        )
+
+        self.assertTrue(await self.runner.run_once())
+
+        self.assertEqual(self.state.action(action.id).result, {"added": 3})
+        start, end, count, source, kind = self.controller.period_scans[0]
+        self.assertEqual(start.astimezone(MOSCOW).date().isoformat(), "2026-08-01")
+        self.assertEqual(end.astimezone(MOSCOW).date().isoformat(), "2026-08-06")
+        self.assertEqual((count, source, kind), (20, "anime", "image"))
 
 
 if __name__ == "__main__":

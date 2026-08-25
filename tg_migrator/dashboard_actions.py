@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from typing import Any
 
+from .selection import parse_start_date
 from .state import DashboardAction, MigrationState
 
 
@@ -64,11 +66,30 @@ class DashboardActionRunner:
             kind = _optional_text(payload, "kind") or "any"
             if kind not in {"any", "video", "image"}:
                 raise ValueError("Поле kind: any, video или image.")
-            added = await self.controller.parse_latest(
-                count,
-                source,
-                required_kind=kind,
-            )
+            start_text = _optional_text(payload, "start")
+            end_text = _optional_text(payload, "end")
+            if end_text and not start_text:
+                raise ValueError("Для даты окончания укажите дату начала.")
+            if start_text:
+                start = parse_start_date(start_text)
+                end = (
+                    parse_start_date(end_text) + timedelta(days=1)
+                    if end_text
+                    else None
+                )
+                added = await self.controller.parse_from(
+                    start,
+                    count,
+                    source,
+                    end=end,
+                    required_kind=kind,
+                )
+            else:
+                added = await self.controller.parse_latest(
+                    count,
+                    source,
+                    required_kind=kind,
+                )
             return {"added": int(added)}
 
         if action.kind == "retry":
