@@ -360,6 +360,18 @@ class AutomationController:
         self.state.set_setting("last_published_source", item.source)
         return item
 
+    async def publish_item(self, item_id: str) -> QueueItem:
+        item = self.state.claim_item(item_id)
+        if item is None:
+            raise ValueError("Пост уже обработан или недоступен.")
+        try:
+            await self.publisher.publish(item)
+        except Exception:
+            self.state.release(item.id)
+            raise
+        self.state.set_setting("last_published_source", item.source)
+        return self.state.queue_item(item.id) or item
+
     def _claim_smart(
         self,
         kind: str = "any",

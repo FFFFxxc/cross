@@ -1,11 +1,12 @@
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 from telethon.errors.common import InvalidBufferError
 
 from tg_migrator.config import AutomationConfig, Targets
-from tg_migrator.watch import maintain_connection, run_watcher
+from tg_migrator.watch import maintain_connection, run_watcher, worker_heartbeat_loop
 
 
 class StopSignal(Exception):
@@ -40,6 +41,21 @@ class IncompleteReadClient(FakeClient):
 
 
 class ConnectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_worker_heartbeat_is_written_before_each_wait(self):
+        state = SimpleNamespace(touch_worker_heartbeat=Mock())
+        waits = []
+
+        async def stop_after_two(seconds):
+            waits.append(seconds)
+            if len(waits) == 2:
+                raise StopSignal()
+
+        with self.assertRaises(StopSignal):
+            await worker_heartbeat_loop(state, interval=17, sleep=stop_after_two)
+
+        self.assertEqual(state.touch_worker_heartbeat.call_count, 2)
+        self.assertEqual(waits, [17, 17])
+
     async def test_transient_telegram_disconnect_reconnects_before_retrying(self):
         client = FakeClient()
 

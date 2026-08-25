@@ -15,6 +15,7 @@ from .config import (
     Targets,
     load_automation_config,
 )
+from .dashboard_actions import DashboardActionRunner
 from .max_client import MaxClient, MaxConfig
 from .migrator import Progress, TransferMode, migrate_posts
 from .publisher import PostPublisher
@@ -74,6 +75,17 @@ async def maintain_connection(client, sleep=asyncio.sleep) -> None:
             retry_delay = 15
         except _TRANSIENT_CONNECTION_ERRORS:
             retry_delay = min(retry_delay * 2, 300)
+
+
+async def worker_heartbeat_loop(
+    state: MigrationState,
+    *,
+    interval: int = 30,
+    sleep=asyncio.sleep,
+) -> None:
+    while True:
+        state.touch_worker_heartbeat()
+        await sleep(interval)
 
 
 async def _run_legacy_watcher(client, targets: Targets) -> None:
@@ -297,6 +309,7 @@ async def _run_automation_watcher(
         default_signature=(config.signature_text, config.signature_url),
     )
     controller = AutomationController(client, state, publisher, config)
+    action_runner = DashboardActionRunner(state, controller)
     tasks: list[asyncio.Task] = []
     try:
         await controller.initialize()
@@ -327,6 +340,11 @@ async def _run_automation_watcher(
         tasks = [
             asyncio.create_task(controller.refill_loop(), name="queue-refill"),
             asyncio.create_task(controller.scheduler(), name="schedule"),
+            asyncio.create_task(action_runner.loop(), name="dashboard-actions"),
+            asyncio.create_task(
+                worker_heartbeat_loop(state),
+                name="worker-heartbeat",
+            ),
         ]
         await controller.notify(
             "Desiree запущена: очередь и расписание включены.\n\n"

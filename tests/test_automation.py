@@ -383,6 +383,24 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state.queue_item(stale.id).status, "expired")
         self.assertEqual([item.id for item in publisher.calls], [fresh.id])
 
+    async def test_publish_item_claims_exact_manual_choice(self):
+        now = datetime.now(timezone.utc)
+        first = self.state.enqueue(
+            "animeworldmem", "message:1", (1,), "video", 1000, now
+        )
+        chosen = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "video", 1, now
+        )
+        controller, publisher = await self.controller()
+
+        published = await controller.publish_item(chosen.id)
+
+        self.assertEqual(published.id, chosen.id)
+        self.assertEqual([item.id for item in publisher.calls], [chosen.id])
+        self.assertEqual(self.state.queue_item(first.id).status, "pending")
+        with self.assertRaisesRegex(ValueError, "обработан|недоступен"):
+            await controller.publish_item(chosen.id)
+
     async def test_publish_refreshes_activity_before_choosing(self):
         now = datetime.now(timezone.utc)
         stale_score = self.state.enqueue(
