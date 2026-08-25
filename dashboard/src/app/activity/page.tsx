@@ -1,6 +1,5 @@
 import { AppShell } from "@/components/app-shell";
 import { ActivityList } from "@/components/activity-list";
-import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 type Row = {
@@ -15,7 +14,6 @@ type Row = {
 };
 
 export default async function ActivityPage() {
-  await requireSession();
   const rows = await query<Row>(
     `SELECT id, action_kind, status, queue_item_id, result, error, created_at, completed_at
      FROM automation_actions ORDER BY created_at DESC, id DESC LIMIT 100`,

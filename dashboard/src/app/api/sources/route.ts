@@ -1,5 +1,4 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
 import { query } from "@/lib/db";
 
 type SourceRow = {
@@ -11,7 +10,6 @@ type SourceRow = {
 };
 
 export async function GET() {
-  if (!(await hasSession())) return unauthorized();
   const sources = await query<SourceRow>(
     `SELECT peer, title, availability, checked_at, error
      FROM automation_sources ORDER BY added_at, peer`,

@@ -1,12 +1,11 @@
-import { privateJson, unauthorized } from "@/lib/api";
+import { privateJson } from "@/lib/api";
 import { createAction } from "@/lib/actions";
-import { hasSession, requireSameOrigin } from "@/lib/auth";
+import { requireSameOrigin } from "@/lib/auth";
 
 export async function POST(
   request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
-  if (!(await hasSession())) return unauthorized();
   try {
     requireSameOrigin(request);
     const { id } = await context.params;

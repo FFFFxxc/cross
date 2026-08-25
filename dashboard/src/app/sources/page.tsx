@@ -1,7 +1,6 @@
 import { AppShell } from "@/components/app-shell";
 import { ScanForm } from "@/components/scan-form";
 import { SourceManager, type DashboardSource } from "@/components/source-manager";
-import { requireSession } from "@/lib/auth";
 import { query } from "@/lib/db";
 
 type Row = {
@@ -13,7 +12,6 @@ type Row = {
 };
 
 export default async function SourcesPage() {
-  await requireSession();
   const rows = await query<Row>(
     "SELECT peer, title, availability, checked_at, error FROM automation_sources ORDER BY added_at, peer",
   );

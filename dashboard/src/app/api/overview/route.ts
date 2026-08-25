@@ -1,5 +1,4 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
 import { query } from "@/lib/db";
 
 type CountRow = { status: string; total: number | string };
@@ -22,7 +21,6 @@ function workerStatus(heartbeat: string | undefined) {
 }
 
 export async function GET() {
-  if (!(await hasSession())) return unauthorized();
   const [counts, settings, activity] = await Promise.all([
     query<CountRow>(
       "SELECT status, COUNT(*) AS total FROM automation_queue GROUP BY status",

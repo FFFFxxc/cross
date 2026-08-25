@@ -1,5 +1,4 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
 import { requireSameOrigin } from "@/lib/auth";
 import { query } from "@/lib/db";
 import { scheduleInput } from "@/lib/actions";
@@ -7,7 +6,6 @@ import { scheduleInput } from "@/lib/actions";
 type SlotRow = { run_time: string; media_kind: string; source: string | null };
 
 export async function GET() {
-  if (!(await hasSession())) return unauthorized();
   const slots = await query<SlotRow>(
     "SELECT run_time, media_kind, source FROM automation_slots ORDER BY run_time",
   );
@@ -22,7 +20,6 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  if (!(await hasSession())) return unauthorized();
   try {
     requireSameOrigin(request);
     const input = scheduleInput.parse(await request.json());

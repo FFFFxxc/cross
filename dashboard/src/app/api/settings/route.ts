@@ -1,5 +1,4 @@
-import { privateJson, unauthorized } from "@/lib/api";
-import { hasSession } from "@/lib/auth";
+import { privateJson } from "@/lib/api";
 import { requireSameOrigin } from "@/lib/auth";
 import { settingsInput } from "@/lib/actions";
 import { query } from "@/lib/db";
@@ -15,7 +14,6 @@ export const SETTING_KEYS = [
 type SettingRow = { key: string; value: string };
 
 export async function GET() {
-  if (!(await hasSession())) return unauthorized();
   const settings = await query<SettingRow>(
     "SELECT key, value FROM automation_settings WHERE key = ANY($1::text[])",
     [[...SETTING_KEYS]],
@@ -34,7 +32,6 @@ const SETTING_FIELDS = {
 } as const;
 
 export async function PUT(request: Request) {
-  if (!(await hasSession())) return unauthorized();
   try {
     requireSameOrigin(request);
   } catch {
