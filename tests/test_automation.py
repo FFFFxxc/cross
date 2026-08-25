@@ -1,8 +1,8 @@
+import asyncio
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-import random
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -225,7 +225,8 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             await controller.handle_new_post([message(7, chat_id=-777)], chat_id=-777)
         )
-        self.assertEqual(self.state.pending_count(), 1)
+        self.assertEqual(self.state.pending_count(), 0)
+        self.assertEqual(len(self.state.pool_items()), 1)
 
     async def test_parse_fills_queue_without_duplicates(self):
         client = FakeClient({"animeworldmem": [message(3), message(2), message(1)]})
@@ -235,8 +236,8 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         await controller.handle_command(event, event.raw_text)
         await controller.handle_command(event, event.raw_text)
 
-        self.assertEqual(self.state.queue_counts(), {"pending": 2})
-        self.assertIn("Добавлено: 0", event.responses[-1])
+        self.assertEqual(self.state.pending_count(), 2)
+        self.assertEqual(len(self.state.pool_items()), 3)
 
     async def test_parse_prefers_high_engagement_over_empty_reach(self):
         now = datetime.now(timezone.utc)
@@ -418,7 +419,6 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         controller, publisher = await self.controller(client)
-        controller._rng = random.Random(1)
 
         published = await controller.publish_next(refill=False)
 
@@ -429,7 +429,7 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([item.id for item in publisher.calls], [newly_popular.id])
 
-    async def test_publish_uses_weighted_choice_inside_top_five(self):
+    async def test_publish_uses_highest_ranked_item(self):
         now = datetime.now(timezone.utc)
         items = [
             self.state.enqueue(
@@ -443,13 +443,12 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             for index, score in enumerate((500, 400, 300, 200, 100, 1), start=1)
         ]
         controller, publisher = await self.controller()
-        controller._rng = random.Random(0)
 
         published = await controller.publish_next(refill=False)
 
-        self.assertEqual(published.id, items[2].id)
-        self.assertEqual([item.id for item in publisher.calls], [items[2].id])
-        self.assertEqual(self.state.queue_item(items[5].id).status, "pending")
+        self.assertEqual(published.id, items[0].id)
+        self.assertEqual([item.id for item in publisher.calls], [items[0].id])
+        self.assertEqual(self.state.queue_item(items[5].id).status, "candidate")
 
     async def test_publish_rotates_away_from_previous_source(self):
         now = datetime.now(timezone.utc)
@@ -469,17 +468,14 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.state.set_setting("last_published_source", "source-a")
         controller, publisher = await self.controller(scan_limit=5)
-        controller._rng = random.Random(1)
 
         published = await controller.publish_next(refill=False)
 
         self.assertEqual(published.id, other_source.id)
-        self.assertTrue(
-            all(
-                self.state.queue_item(item.id).status == "pending"
-                for item in previous_source_items
-            )
-        )
+        self.assertTrue(all(
+            self.state.queue_item(item.id).status in {"pending", "candidate"}
+            for item in previous_source_items
+        ))
         self.assertEqual(
             self.state.get_setting("last_published_source"),
             "source-b",
@@ -613,7 +609,7 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([item.id for item in publisher.calls], [video.id])
         self.assertEqual(self.state.queue_item(image.id).status, "pending")
 
-    async def test_stale_slot_is_not_caught_up_after_late_restart(self):
+    async def test_missed_same_day_slot_is_caught_up_after_late_restart(self):
         controller, publisher = await self.controller()
         item = self.state.enqueue(
             "animeworldmem", "message:18", (18,), "image", 1,
@@ -624,9 +620,30 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             datetime(2026, 8, 14, 18, 10, tzinfo=controller.timezone)
         )
 
-        self.assertFalse(published)
-        self.assertEqual(publisher.calls, [])
-        self.assertEqual(self.state.queue_item(item.id).status, "pending")
+        self.assertTrue(published)
+        self.assertEqual([value.id for value in publisher.calls], [item.id])
+
+    async def test_scheduler_survives_transient_error_and_records_health(self):
+        controller, _ = await self.controller()
+        calls = 0
+
+        async def run_due():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("temporary Neon error")
+
+        async def sleep(_seconds):
+            if calls >= 2:
+                raise asyncio.CancelledError
+
+        controller.run_due = run_due
+        with self.assertRaises(asyncio.CancelledError):
+            await controller.scheduler(sleep=sleep)
+
+        self.assertEqual(calls, 2)
+        self.assertIn("temporary Neon error", self.state.get_setting("scheduler_last_error"))
+        self.assertIsNotNone(self.state.get_setting("scheduler_heartbeat_at"))
 
     async def test_refill_stops_at_queue_minimum(self):
         client = FakeClient(
@@ -670,7 +687,34 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(await controller.handle_new_post([post], chat_id=-100))
         self.assertFalse(await controller.handle_new_post([post], chat_id=-100))
-        self.assertEqual(self.state.pending_count(), 1)
+        self.assertEqual(self.state.pending_count(), 0)
+        self.assertEqual(self.state.pool_items()[0].status, "candidate")
+
+    async def test_rebalance_keeps_top_posts_and_even_source_shares(self):
+        now = datetime.now(timezone.utc)
+        self.state.add_source("animeworldmem", "Anime World")
+        self.state.add_source("source-b", "Source B")
+        client = FakeClient({
+            "animeworldmem": [
+                message(index, views=1000 + index, reactions=index, published_at=now)
+                for index in range(1, 7)
+            ],
+            "source-b": [
+                message(100 + index, views=500 + index, reactions=index, published_at=now)
+                for index in range(1, 7)
+            ],
+        })
+        controller, _ = await self.controller(client, queue_minimum=4, scan_limit=6)
+
+        await controller.refill(force=True)
+
+        pending = self.state.pending_items(limit=20)
+        self.assertEqual(len(pending), 4)
+        self.assertEqual({item.source for item in pending}, {"animeworldmem", "source-b"})
+        self.assertEqual(
+            {item.message_ids[0] for item in pending if item.source == "animeworldmem"},
+            {5, 6},
+        )
 
     async def test_target_history_prevents_first_neon_queue_duplicates(self):
         already_published = message(90)

@@ -13,6 +13,7 @@ const queueItem = {
   viewsCount: 25_000,
   reactionsCount: 870,
   forwardsCount: 92,
+  metricsKnown: true,
   hasPreview: true,
   error: null,
 };
@@ -27,6 +28,7 @@ test("public queue controls and safe settings work on desktop and mobile", async
   await page.route("**/api/overview", (route) => route.fulfill({
     json: {
       worker: { state: "active", heartbeatAt: new Date().toISOString() },
+      scheduler: { state: "active", heartbeatAt: new Date().toISOString(), lastError: null },
       queue: { pending: 1, published: 10 },
       settings: { freshDays: 7, minReactions: 0, minViews: 0 },
       latestActivity: null,
@@ -68,7 +70,9 @@ test("public queue controls and safe settings work on desktop and mobile", async
   await page.goto("/");
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByLabel("Пароль")).toHaveCount(0);
-  await expect(page.getByText("Работает")).toBeVisible();
+  await expect(
+    page.getByRole("article").filter({ hasText: "Render-воркер" }).getByText("Работает"),
+  ).toBeVisible();
 
   await page.getByRole("link", { name: "Очередь", exact: true }).click();
   await expect(page.getByText("Проверочный аниме-пост")).toBeVisible();

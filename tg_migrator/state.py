@@ -44,6 +44,7 @@ class QueueItem:
     views_count: int
     reactions_count: int
     forwards_count: int
+    metrics_known: bool
     preview_mime: str | None
     preview_data: bytes | None
 
@@ -192,6 +193,7 @@ class MigrationState:
                     "views_count": "INTEGER NOT NULL DEFAULT 0",
                     "reactions_count": "INTEGER NOT NULL DEFAULT 0",
                     "forwards_count": "INTEGER NOT NULL DEFAULT 0",
+                    "metrics_known": "INTEGER NOT NULL DEFAULT 0",
                     "preview_mime": "TEXT",
                     "preview_data": binary_type,
                 },
@@ -425,7 +427,10 @@ class MigrationState:
         score: int,
         published_at: datetime,
         fingerprint: str | None = None,
+        status: str = "pending",
     ) -> QueueItem | None:
+        if status not in {"pending", "candidate"}:
+            raise ValueError("Новый пост может быть pending или candidate.")
         item_id = uuid.uuid4().hex[:12]
         params = {
             "id": item_id,
@@ -435,7 +440,7 @@ class MigrationState:
             "media_kind": media_kind,
             "score": int(score),
             "published_at": published_at.isoformat(),
-            "status": "pending",
+            "status": status,
             "created_at": _utcnow(),
         }
         with self._engine.begin() as connection:
@@ -517,6 +522,7 @@ class MigrationState:
             views_count=int(row["views_count"]),
             reactions_count=int(row["reactions_count"]),
             forwards_count=int(row["forwards_count"]),
+            metrics_known=bool(row["metrics_known"]),
             preview_mime=(
                 str(row["preview_mime"])
                 if row["preview_mime"] is not None
@@ -566,6 +572,53 @@ class MigrationState:
             ).mappings()
             return [self._queue_item(row) for row in rows]
 
+    def pool_items(
+        self,
+        media_kind: str = "any",
+        source: str | None = None,
+        *,
+        limit: int = 1000,
+    ) -> list[QueueItem]:
+        clauses = ["status IN ('pending', 'candidate')"]
+        params: dict[str, str | int] = {"limit": int(limit)}
+        if media_kind != "any":
+            clauses.append("media_kind = :media_kind")
+            params["media_kind"] = media_kind
+        if source is not None:
+            clauses.append("source = :source")
+            params["source"] = str(source)
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    SELECT * FROM automation_queue
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY score DESC, published_at DESC, created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).mappings()
+            return [self._queue_item(row) for row in rows]
+
+    def rebalance_pending(self, selected_ids: Iterable[str]) -> None:
+        values = list(dict.fromkeys(str(value) for value in selected_ids))
+        with self._engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE automation_queue SET status = 'candidate' "
+                    "WHERE status = 'pending'"
+                )
+            )
+            for item_id in values:
+                connection.execute(
+                    text(
+                        "UPDATE automation_queue SET status = 'pending' "
+                        "WHERE id = :id AND status = 'candidate'"
+                    ),
+                    {"id": item_id},
+                )
+
     def update_score(self, item_id: str, score: int) -> bool:
         with self._engine.begin() as connection:
             result = connection.execute(
@@ -588,6 +641,7 @@ class MigrationState:
         views_count: int | None = None,
         reactions_count: int | None = None,
         forwards_count: int | None = None,
+        metrics_known: bool | None = None,
         preview_mime: str | None = None,
         preview_data: bytes | None = None,
     ) -> bool:
@@ -613,6 +667,9 @@ class MigrationState:
             if value is not None:
                 assignments.append(f"{name} = :{name}")
                 values[name] = int(value)
+        if metrics_known is not None:
+            assignments.append("metrics_known = :metrics_known")
+            values["metrics_known"] = int(bool(metrics_known))
         if preview_mime is not None:
             assignments.append("preview_mime = :preview_mime")
             values["preview_mime"] = preview_mime[:100]
@@ -804,7 +861,8 @@ class MigrationState:
                     """
                     UPDATE automation_queue
                     SET status = 'expired', error = NULL
-                    WHERE status = 'pending' AND published_at < :cutoff
+                    WHERE status IN ('pending', 'candidate')
+                      AND published_at < :cutoff
                     """
                 ),
                 {"cutoff": cutoff.isoformat()},

@@ -35,6 +35,7 @@ describe("queue route", () => {
         views_count: null,
         reactions_count: null,
         forwards_count: null,
+        metrics_known: 0,
         preview_mime: "image/webp",
         error: null,
         total_count: 11,
@@ -52,6 +53,7 @@ describe("queue route", () => {
       viewsCount: 0,
       reactionsCount: 0,
       forwardsCount: 0,
+      metricsKnown: false,
       hasPreview: true,
     });
     expect(payload.items[0]).not.toHaveProperty("preview_data");

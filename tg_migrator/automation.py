@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
@@ -36,7 +35,7 @@ DEFAULT_SLOTS = (
     Slot("21:00", "any"),
 )
 
-SLOT_GRACE = timedelta(minutes=5)
+SLOT_GRACE = timedelta(days=1)
 
 HELP = """Управление Desiree:
 
@@ -98,7 +97,6 @@ class AutomationController:
         self.account_id: int | None = None
         self._chat_sources: dict[int, str] = {}
         self._cancel = asyncio.Event()
-        self._rng = random.Random()
 
     def _fresh_days(self) -> int:
         return int(self.state.get_setting("fresh_days", str(self.config.fresh_days)))
@@ -225,6 +223,7 @@ class AutomationController:
         source: str,
         posts,
         limit: int | None = None,
+        status: str = "candidate",
     ) -> int:
         added = 0
         for post in posts:
@@ -238,6 +237,7 @@ class AutomationController:
                 post_smart_score(post),
                 post.published_at,
                 fingerprint=post_fingerprint(post),
+                status=status,
             )
             if item is not None:
                 metrics = post_metrics(post)
@@ -248,6 +248,7 @@ class AutomationController:
                     views_count=metrics.views,
                     reactions_count=metrics.reactions,
                     forwards_count=metrics.forwards,
+                    metrics_known=metrics.known,
                     preview_mime=preview.mime_type if preview is not None else None,
                     preview_data=preview.data if preview is not None else None,
                 )
@@ -266,16 +267,15 @@ class AutomationController:
     ) -> int:
         if count <= 0:
             raise ValueError("Количество должно быть больше нуля.")
-        total = 0
-        for peer in self._selected_sources(source):
-            read_count = scan_count or (
-                self.config.scan_limit if required_kind != "any" else count
-            )
+        peers = self._selected_sources(source)
+        read_count = scan_count or self.config.scan_limit
+        ranked: dict[str, list] = {}
+        cutoff = self._fresh_cutoff()
+        for peer in peers:
             posts = await latest_posts(
                 self.client.iter_messages(peer, limit=read_count),
                 read_count,
             )
-            cutoff = self._fresh_cutoff()
             posts = [
                 post
                 for post in posts
@@ -292,9 +292,25 @@ class AutomationController:
             )
             if required_kind != "any":
                 posts = [post for post in posts if post_media_kind(post) == required_kind]
-            total += await self._enqueue_posts(peer, posts, count - total)
-            if total >= count or self._cancel.is_set():
+            ranked[peer] = posts
+
+        total = 0
+        positions = {peer: 0 for peer in peers}
+        while total < count and not self._cancel.is_set():
+            progressed = False
+            for peer in peers:
+                posts = ranked.get(peer, [])
+                while positions[peer] < len(posts) and total < count:
+                    progressed = True
+                    post = posts[positions[peer]]
+                    positions[peer] += 1
+                    added = await self._enqueue_posts(peer, [post], 1)
+                    if added:
+                        total += added
+                        break
+            if not progressed:
                 break
+        self._rebalance_queue()
         return total
 
     async def parse_from(
@@ -324,6 +340,7 @@ class AutomationController:
             total += await self._enqueue_posts(peer, posts, count - total)
             if total >= count or self._cancel.is_set():
                 break
+        self._rebalance_queue()
         return total
 
     async def refill(
@@ -334,6 +351,8 @@ class AutomationController:
         source: str | None = None,
     ) -> int:
         self.state.expire_pending_before(self._fresh_cutoff())
+        await self._refresh_pending_scores(required_kind, source)
+        self._rebalance_queue()
         pending = self.state.pending_count()
         if not force and pending >= self.config.queue_minimum:
             return 0
@@ -355,15 +374,18 @@ class AutomationController:
         self.state.expire_pending_before(self._fresh_cutoff())
         source = str(normalize_peer(source)) if source is not None else None
         await self._refresh_pending_scores(kind, source)
+        self._rebalance_queue()
         item = self._claim_smart(kind, source)
         if item is None and refill:
             await self.refill(force=True, required_kind=kind, source=source)
             await self._refresh_pending_scores(kind, source)
+            self._rebalance_queue()
             item = self._claim_smart(kind, source)
         if item is None:
             return None
         await self.publisher.publish(item)
         self.state.set_setting("last_published_source", item.source)
+        self._rebalance_queue()
         return item
 
     async def publish_item(self, item_id: str) -> QueueItem:
@@ -407,10 +429,7 @@ class AutomationController:
             ]
             if rotated:
                 candidates = rotated
-        candidates = candidates[:5]
-        weights = (10, 6, 3, 2, 1)[: len(candidates)]
-        selected = self._rng.choices(candidates, weights=weights, k=1)[0]
-        return self.state.claim_item(selected.id)
+        return self.state.claim_item(candidates[0].id)
 
     def _non_negative_setting(self, key: str) -> int:
         try:
@@ -418,12 +437,64 @@ class AutomationController:
         except (TypeError, ValueError):
             return 0
 
+    def _rebalance_queue(self) -> None:
+        candidates = self.state.pool_items(
+            limit=max(
+                self.config.scan_limit * max(1, len(self.state.sources())),
+                self.config.queue_minimum * 4,
+            )
+        )
+        minimum_reactions = self._non_negative_setting("min_reactions")
+        minimum_views = self._non_negative_setting("min_views")
+        candidates = [
+            item
+            for item in candidates
+            if item.reactions_count >= minimum_reactions
+            and item.views_count >= minimum_views
+        ]
+        by_source: dict[str, list[QueueItem]] = {}
+        for item in candidates:
+            by_source.setdefault(item.source, []).append(item)
+        for items in by_source.values():
+            items.sort(
+                key=lambda item: (
+                    item.score,
+                    item.reactions_count,
+                    item.views_count,
+                    item.published_at,
+                ),
+                reverse=True,
+            )
+        source_order = [
+            source.peer for source in self.state.sources()
+            if source.peer in by_source
+        ]
+        source_order.extend(
+            source for source in by_source
+            if source not in source_order
+        )
+        selected: list[str] = []
+        while len(selected) < self.config.queue_minimum:
+            progressed = False
+            for source_name in source_order:
+                items = by_source[source_name]
+                if items and len(selected) < self.config.queue_minimum:
+                    selected.append(items.pop(0).id)
+                    progressed = True
+            if not progressed:
+                break
+        self.state.rebalance_pending(selected)
+
     async def _refresh_pending_scores(
         self,
         kind: str = "any",
         source: str | None = None,
     ) -> None:
-        items = self.state.pending_items(kind, source, limit=self.config.scan_limit)
+        items = self.state.pool_items(
+            kind,
+            source,
+            limit=self.config.scan_limit * max(1, len(self.state.sources())),
+        )
         by_source: dict[str, list[QueueItem]] = {}
         for item in items:
             by_source.setdefault(item.source, []).append(item)
@@ -461,6 +532,7 @@ class AutomationController:
                         views_count=metrics.views,
                         reactions_count=metrics.reactions,
                         forwards_count=metrics.forwards,
+                        metrics_known=metrics.known,
                     )
 
     async def handle_new_post(self, messages, *, chat_id: int | None = None) -> bool:
@@ -475,7 +547,7 @@ class AutomationController:
         post = post_from_messages(tuple(messages))
         if post is None:
             return False
-        return await self._enqueue_posts(source, [post]) == 1
+        return await self._enqueue_posts(source, [post], status="candidate") == 1
 
     async def run_due(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(self.timezone)
@@ -497,24 +569,32 @@ class AutomationController:
         run_time = slot.time
         if not self.state.claim_slot(current.date(), run_time):
             return False
-        item = self.state.claim(slot.kind, slot.source)
-        if item is None:
-            await self.refill(force=True, required_kind=slot.kind, source=slot.source)
-            item = self.state.claim(slot.kind, slot.source)
+        item = await self.publish_next(slot.kind, slot.source)
         if item is None:
             await self.notify(f"Слот {run_time}: подходящего поста нет.")
             return False
-        try:
-            await self.publisher.publish(item)
-        except Exception as exc:
-            await self.notify(f"Ошибка публикации {item.id}: {exc}")
-            return False
         return True
 
-    async def scheduler(self) -> None:
+    async def scheduler(self, sleep=asyncio.sleep) -> None:
         while True:
-            await self.run_due()
-            await asyncio.sleep(20)
+            try:
+                self.state.set_setting(
+                    "scheduler_heartbeat_at",
+                    datetime.now(timezone.utc).isoformat(),
+                )
+                await self.run_due()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                try:
+                    self.state.set_setting(
+                        "scheduler_last_error",
+                        f"{exc.__class__.__name__}: {exc}"[:1000],
+                    )
+                except Exception:
+                    pass
+                await self.notify(f"Ошибка расписания, повторяю: {exc}")
+            await sleep(20)
 
     async def refill_loop(self) -> None:
         while True:

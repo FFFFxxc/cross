@@ -28,7 +28,14 @@ export async function GET() {
     query<SettingRow>(
       `SELECT key, value FROM automation_settings
        WHERE key = ANY($1::text[])`,
-      [["worker_heartbeat_at", "fresh_days", "min_reactions", "min_views"]],
+      [[
+        "worker_heartbeat_at",
+        "scheduler_heartbeat_at",
+        "scheduler_last_error",
+        "fresh_days",
+        "min_reactions",
+        "min_views",
+      ]],
     ),
     query<ActivityRow>(
       `SELECT id, action_kind, status, error, created_at
@@ -38,6 +45,10 @@ export async function GET() {
   const values = Object.fromEntries(settings.map((item) => [item.key, item.value]));
   return privateJson({
     worker: workerStatus(values.worker_heartbeat_at),
+    scheduler: {
+      ...workerStatus(values.scheduler_heartbeat_at),
+      lastError: values.scheduler_last_error || null,
+    },
     queue: Object.fromEntries(counts.map((item) => [item.status, Number(item.total)])),
     settings: {
       freshDays: Number(values.fresh_days || 0),

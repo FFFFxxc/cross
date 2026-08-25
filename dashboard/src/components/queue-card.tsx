@@ -18,12 +18,17 @@ export type DashboardQueueItem = {
   viewsCount: number;
   reactionsCount: number;
   forwardsCount: number;
+  metricsKnown: boolean;
   hasPreview: boolean;
   error: string | null;
 };
 
 function number(value: number) {
   return new Intl.NumberFormat("ru-RU").format(value).replaceAll(" ", " ");
+}
+
+function metric(value: number, known: boolean) {
+  return known ? number(value) : "Нет данных";
 }
 
 function pollAction(id: string, onChanged: () => void) {
@@ -85,9 +90,9 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
         <h2>{title}</h2>
         <p className="source">{item.source}</p>
         <dl className="metrics">
-          <div><dt>Просмотры</dt><dd>{number(item.viewsCount)}</dd></div>
-          <div><dt>Реакции</dt><dd>{number(item.reactionsCount)}</dd></div>
-          <div><dt>Репосты</dt><dd>{number(item.forwardsCount)}</dd></div>
+          <div><dt>Просмотры</dt><dd>{metric(item.viewsCount, item.metricsKnown)}</dd></div>
+          <div><dt>Реакции</dt><dd>{metric(item.reactionsCount, item.metricsKnown)}</dd></div>
+          <div><dt>Репосты</dt><dd>{metric(item.forwardsCount, item.metricsKnown)}</dd></div>
         </dl>
         <p className="date">{new Date(item.publishedAt).toLocaleString("ru-RU")}</p>
         {item.error ? <p className="error">{item.error}</p> : null}
