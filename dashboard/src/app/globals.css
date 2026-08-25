@@ -70,6 +70,20 @@ input, select { width: 100%; margin-top: 6px; border: 1px solid var(--line); bor
 .action-wrap small, .error { color: var(--red); }
 .notice { padding: 18px; border: 1px solid var(--line); background: var(--panel); border-radius: 14px; }
 .load-more { display: block; margin: 24px auto 0; }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: end; }
+.form-grid label, .inline-form label, .new-slot label, .slot-row label { color: var(--muted); font-size: 12px; font-weight: 700; }
+.form-grid .wide { grid-column: span 2; }
+.form-grid small { display: block; margin-top: 5px; color: var(--muted); }
+.inline-form, .new-slot { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+.source-list, .slot-list, .activity-list { display: grid; gap: 10px; margin-top: 18px; }
+.source-row, .slot-row, .activity-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.source-row p, .activity-row p { margin: 4px 0 0; color: var(--muted); }
+.slot-row { display: grid; grid-template-columns: 80px 1fr 1fr auto auto; }
+.new-slot { margin-bottom: 14px; }
+.settings-form { margin-top: 14px; }
+.success { color: var(--green); }
+.badge-text { display: inline-block; padding: 5px 9px; background: var(--panel-2); border-radius: 999px; }
+.activity-row code { max-width: 360px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 
 body > main:only-child { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
 body > main:only-child form { width: min(420px, 100%); display: grid; gap: 12px; border: 1px solid var(--line); background: var(--panel); border-radius: 20px; padding: 28px; }
@@ -87,6 +101,9 @@ body > main:only-child form { width: min(420px, 100%); display: grid; gap: 12px;
   .hero { padding: 22px; }
   .hero .button { text-align: center; }
   .queue-grid, .status-grid, .queue-controls { grid-template-columns: 1fr; }
+  .form-grid, .inline-form, .new-slot, .slot-row { grid-template-columns: 1fr; }
+  .form-grid .wide { grid-column: auto; }
+  .source-row, .activity-row { align-items: stretch; flex-direction: column; }
   .preview { height: 220px; }
   h1 { font-size: 34px; }
 }
