@@ -97,7 +97,7 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
         <p className="date">{new Date(item.publishedAt).toLocaleString("ru-RU")}</p>
         {item.error ? <p className="error">{item.error}</p> : null}
         <div className="actions">
-          {item.status === "pending" ? (
+          {item.status === "pending" || item.status === "candidate" ? (
             <>
               <ActionButton label="Опубликовать" pendingLabel="Ожидает бота" className="primary" onAction={publish} />
               <ActionButton label="Пропустить" pendingLabel="Пропускаю…" onAction={skip} />

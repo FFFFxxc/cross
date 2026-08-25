@@ -40,6 +40,12 @@ describe("QueueCard", () => {
     expect(screen.getByRole("button", { name: "Пропустить" })).toBeEnabled();
   });
 
+  it("offers the same manual actions for a candidate", () => {
+    render(<QueueCard item={{ ...item, status: "candidate" }} onChanged={vi.fn()} />);
+    expect(screen.getByRole("button", { name: "Опубликовать" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Пропустить" })).toBeEnabled();
+  });
+
   it("disables publish immediately and shows worker wait state", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ action: { id: "action-1", status: "pending" } }), {

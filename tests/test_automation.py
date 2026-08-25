@@ -390,7 +390,8 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             "animeworldmem", "message:1", (1,), "video", 1000, now
         )
         chosen = self.state.enqueue(
-            "animeworldmem", "message:2", (2,), "video", 1, now
+            "animeworldmem", "message:2", (2,), "video", 1, now,
+            status="candidate",
         )
         controller, publisher = await self.controller()
 

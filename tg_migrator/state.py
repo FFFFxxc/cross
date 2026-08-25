@@ -696,7 +696,7 @@ class MigrationState:
                 text(
                     """
                     SELECT * FROM automation_queue
-                    WHERE id = :id AND status = 'pending'
+                    WHERE id = :id AND status IN ('pending', 'candidate')
                     """
                 ),
                 {"id": item_id},
@@ -707,7 +707,7 @@ class MigrationState:
                 text(
                     """
                     UPDATE automation_queue SET status = 'processing', error = NULL
-                    WHERE id = :id AND status = 'pending'
+                    WHERE id = :id AND status IN ('pending', 'candidate')
                     """
                 ),
                 {"id": item_id},
@@ -1051,7 +1051,7 @@ class MigrationState:
                 text(
                     """
                     UPDATE automation_queue SET status = 'skipped', error = NULL
-                    WHERE id = :id AND status = 'pending'
+                    WHERE id = :id AND status IN ('pending', 'candidate')
                     """
                 ),
                 {"id": item_id},
