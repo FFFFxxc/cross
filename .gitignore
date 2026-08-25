@@ -7,3 +7,8 @@ __pycache__/
 *.egg-info/
 *.swp
 .worktrees/
+dashboard/node_modules/
+dashboard/.next/
+dashboard/tsconfig.tsbuildinfo
+dashboard/test-results/
+dashboard/playwright-report/
