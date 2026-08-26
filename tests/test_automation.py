@@ -309,6 +309,212 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.preview_mime, "image/webp")
         self.assertEqual(saved.preview_data, b"small-preview")
 
+    async def test_score_refresh_backfills_a_missing_preview_only_once(self):
+        now = datetime.now(timezone.utc)
+        original = message(1, views=10, published_at=now)
+        client = FakeClient({"animeworldmem": [original]})
+        controller, _ = await self.controller(client)
+        item = self.state.enqueue(
+            "animeworldmem",
+            "message:1",
+            (1,),
+            "video",
+            10,
+            now,
+        )
+        preview = Preview("image/webp", b"backfilled-preview")
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=preview),
+        ) as capture:
+            await controller._refresh_pending_scores()
+            await controller._refresh_pending_scores()
+
+        saved = self.state.queue_item(item.id)
+        self.assertEqual(saved.preview_mime, "image/webp")
+        self.assertEqual(saved.preview_data, b"backfilled-preview")
+        self.assertEqual(capture.await_count, 1)
+
+    async def test_score_refresh_backfills_previews_beyond_the_scan_limit(self):
+        now = datetime.now(timezone.utc)
+        posts = [
+            message(1, views=20, published_at=now),
+            message(2, views=10, published_at=now),
+        ]
+        client = FakeClient({"animeworldmem": posts})
+        controller, _ = await self.controller(client, scan_limit=1)
+        items = [
+            self.state.enqueue(
+                "animeworldmem",
+                f"message:{post.id}",
+                (post.id,),
+                "video",
+                post.views,
+                now,
+                status="candidate",
+            )
+            for post in posts
+        ]
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=Preview("image/webp", b"preview")),
+        ):
+            await controller._refresh_pending_scores()
+
+        self.assertTrue(all(self.state.queue_item(item.id).preview_data for item in items))
+
+    async def test_preview_backfill_does_not_unbound_score_refresh(self):
+        class TrackingClient(FakeClient):
+            def __init__(self, posts):
+                super().__init__(posts)
+                self.requested_ids = []
+
+            async def get_messages(self, source, ids):
+                self.requested_ids.append(tuple(ids))
+                return await super().get_messages(source, ids)
+
+        now = datetime.now(timezone.utc)
+        posts = [
+            message(index, views=index, published_at=now)
+            for index in range(1, 21)
+        ]
+        client = TrackingClient({"animeworldmem": posts})
+        controller, _ = await self.controller(
+            client,
+            scan_limit=1,
+            queue_minimum=2,
+        )
+        for post in posts:
+            item = self.state.enqueue(
+                "animeworldmem",
+                f"message:{post.id}",
+                (post.id,),
+                "video",
+                post.views,
+                now,
+                status="candidate",
+            )
+            if post.id != 1:
+                self.state.update_post_metadata(
+                    item.id,
+                    preview_mime="image/webp",
+                    preview_data=b"existing",
+                )
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=Preview("image/webp", b"backfilled")),
+        ):
+            await controller._refresh_pending_scores()
+
+        self.assertEqual(set(client.requested_ids[0]), {1, 20})
+
+    async def test_failed_preview_attempts_do_not_starve_lower_posts(self):
+        now = datetime.now(timezone.utc)
+        posts = [
+            message(index, views=index, published_at=now)
+            for index in range(1, 4)
+        ]
+        client = FakeClient({"animeworldmem": posts})
+        controller, _ = await self.controller(
+            client,
+            scan_limit=1,
+            queue_minimum=2,
+        )
+        items = {}
+        for post in posts:
+            items[post.id] = self.state.enqueue(
+                "animeworldmem",
+                f"message:{post.id}",
+                (post.id,),
+                "video",
+                post.views,
+                now,
+                status="candidate",
+            )
+
+        async def preview_for_lowest(_client, messages):
+            if messages[0].id == 1:
+                return Preview("image/webp", b"lowest-preview")
+            return None
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(side_effect=preview_for_lowest),
+        ):
+            await controller._refresh_pending_scores()
+            await controller._refresh_pending_scores()
+
+        self.assertEqual(
+            self.state.queue_item(items[1].id).preview_data,
+            b"lowest-preview",
+        )
+
+    async def test_deleted_messages_do_not_starve_preview_backfill(self):
+        now = datetime.now(timezone.utc)
+        available = message(1, views=1, published_at=now)
+        client = FakeClient({"animeworldmem": [available]})
+        controller, _ = await self.controller(
+            client,
+            scan_limit=1,
+            queue_minimum=2,
+        )
+        items = {}
+        for message_id in (1, 2, 3):
+            items[message_id] = self.state.enqueue(
+                "animeworldmem",
+                f"message:{message_id}",
+                (message_id,),
+                "video",
+                message_id,
+                now,
+                status="candidate",
+            )
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(return_value=Preview("image/webp", b"available")),
+        ):
+            await controller._refresh_pending_scores()
+            await controller._refresh_pending_scores()
+
+        self.assertEqual(
+            self.state.queue_item(items[1].id).preview_data,
+            b"available",
+        )
+
+    async def test_concurrent_refreshes_capture_a_preview_once(self):
+        now = datetime.now(timezone.utc)
+        original = message(1, views=1, published_at=now)
+        client = FakeClient({"animeworldmem": [original]})
+        controller, _ = await self.controller(client)
+        self.state.enqueue(
+            "animeworldmem",
+            "message:1",
+            (1,),
+            "video",
+            1,
+            now,
+            status="candidate",
+        )
+
+        async def delayed_preview(_client, _messages):
+            await asyncio.sleep(0)
+            return Preview("image/webp", b"single-preview")
+
+        with patch(
+            "tg_migrator.automation.capture_preview",
+            new=AsyncMock(side_effect=delayed_preview),
+        ) as capture:
+            await asyncio.gather(
+                controller._refresh_pending_scores(),
+                controller._refresh_pending_scores(),
+            )
+
+        self.assertEqual(capture.await_count, 1)
+
     async def test_automatic_thresholds_filter_but_manual_claim_bypasses_them(self):
         now = datetime.now(timezone.utc)
         below_reactions = self.state.enqueue(

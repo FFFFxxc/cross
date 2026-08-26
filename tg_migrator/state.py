@@ -47,6 +47,7 @@ class QueueItem:
     metrics_known: bool
     preview_mime: str | None
     preview_data: bytes | None
+    preview_checked_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -196,6 +197,7 @@ class MigrationState:
                     "metrics_known": "INTEGER NOT NULL DEFAULT 0",
                     "preview_mime": "TEXT",
                     "preview_data": binary_type,
+                    "preview_checked_at": "TEXT",
                 },
             }
             inspector = inspect(connection)
@@ -533,6 +535,11 @@ class MigrationState:
                 if row["preview_data"] is not None
                 else None
             ),
+            preview_checked_at=(
+                datetime.fromisoformat(str(row["preview_checked_at"]))
+                if row["preview_checked_at"] is not None
+                else None
+            ),
         )
 
     def queue_item(self, item_id: str) -> QueueItem | None:
@@ -601,6 +608,43 @@ class MigrationState:
             ).mappings()
             return [self._queue_item(row) for row in rows]
 
+    def items_missing_previews(
+        self,
+        media_kind: str = "any",
+        source: str | None = None,
+        *,
+        limit: int = 120,
+    ) -> list[QueueItem]:
+        clauses = [
+            "status IN ('pending', 'candidate')",
+            "preview_data IS NULL",
+        ]
+        params: dict[str, str | int] = {"limit": int(limit)}
+        if media_kind != "any":
+            clauses.append("media_kind = :media_kind")
+            params["media_kind"] = media_kind
+        if source is not None:
+            clauses.append("source = :source")
+            params["source"] = str(source)
+        with self._engine.connect() as connection:
+            rows = connection.execute(
+                text(
+                    f"""
+                    SELECT * FROM automation_queue
+                    WHERE {' AND '.join(clauses)}
+                    ORDER BY
+                        CASE WHEN preview_checked_at IS NULL THEN 0 ELSE 1 END,
+                        preview_checked_at ASC,
+                        score DESC,
+                        published_at DESC,
+                        created_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                params,
+            ).mappings()
+            return [self._queue_item(row) for row in rows]
+
     def rebalance_pending(self, selected_ids: Iterable[str]) -> None:
         values = list(dict.fromkeys(str(value) for value in selected_ids))
         with self._engine.begin() as connection:
@@ -644,6 +688,7 @@ class MigrationState:
         metrics_known: bool | None = None,
         preview_mime: str | None = None,
         preview_data: bytes | None = None,
+        preview_checked_at: datetime | None = None,
     ) -> bool:
         if preview_data is not None and len(preview_data) > 131_072:
             raise ValueError("Превью не может быть больше 131072 байт.")
@@ -676,6 +721,9 @@ class MigrationState:
         if preview_data is not None:
             assignments.append("preview_data = :preview_data")
             values["preview_data"] = preview_data
+        if preview_checked_at is not None:
+            assignments.append("preview_checked_at = :preview_checked_at")
+            values["preview_checked_at"] = preview_checked_at.isoformat()
         if not assignments:
             return self.queue_item(item_id) is not None
 
