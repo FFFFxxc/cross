@@ -10,11 +10,14 @@ from typing import Iterable
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine, RowMapping
 
+CONTENT_CATEGORIES = {"content", "news"}
+
 
 @dataclass(frozen=True)
 class Source:
     peer: str
     title: str
+    category: str = "content"
     availability: str = "unknown"
     checked_at: datetime | None = None
     error: str | None = None
@@ -34,6 +37,7 @@ class QueueItem:
     post_key: str
     message_ids: tuple[int, ...]
     media_kind: str
+    content_category: str
     score: int
     published_at: datetime
     status: str
@@ -185,11 +189,13 @@ class MigrationState:
                 connection.execute(text(statement))
             migrations = {
                 "automation_sources": {
+                    "category": "TEXT NOT NULL DEFAULT 'content'",
                     "availability": "TEXT NOT NULL DEFAULT 'unknown'",
                     "checked_at": "TEXT",
                     "error": "TEXT",
                 },
                 "automation_queue": {
+                    "content_category": "TEXT NOT NULL DEFAULT 'content'",
                     "caption_excerpt": "TEXT NOT NULL DEFAULT ''",
                     "views_count": "INTEGER NOT NULL DEFAULT 0",
                     "reactions_count": "INTEGER NOT NULL DEFAULT 0",
@@ -288,18 +294,51 @@ class MigrationState:
             ).scalar_one()
             return int(value)
 
-    def add_source(self, peer: str, title: str) -> bool:
+    def add_source(self, peer: str, title: str, category: str = "content") -> bool:
+        if category not in CONTENT_CATEGORIES:
+            raise ValueError("Категория источника: content или news.")
         with self._engine.begin() as connection:
             result = connection.execute(
                 text(
                     """
-                    INSERT INTO automation_sources (peer, title, added_at)
-                    VALUES (:peer, :title, :added_at)
+                    INSERT INTO automation_sources (peer, title, category, added_at)
+                    VALUES (:peer, :title, :category, :added_at)
                     ON CONFLICT (peer) DO NOTHING
                     """
                 ),
-                {"peer": str(peer), "title": title, "added_at": _utcnow()},
+                {
+                    "peer": str(peer),
+                    "title": title,
+                    "category": category,
+                    "added_at": _utcnow(),
+                },
             )
+            return result.rowcount == 1
+
+    def set_source_category(self, peer: str, category: str) -> bool:
+        if category not in CONTENT_CATEGORIES:
+            raise ValueError("Категория источника: content или news.")
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_sources SET category = :category
+                    WHERE peer = :peer
+                    """
+                ),
+                {"peer": str(peer), "category": category},
+            )
+            if result.rowcount == 1:
+                connection.execute(
+                    text(
+                        """
+                        UPDATE automation_queue SET content_category = :category
+                        WHERE source = :peer
+                          AND status IN ('pending', 'candidate')
+                        """
+                    ),
+                    {"peer": str(peer), "category": category},
+                )
             return result.rowcount == 1
 
     def remove_source(self, peer: str) -> bool:
@@ -315,7 +354,7 @@ class MigrationState:
             rows = connection.execute(
                 text(
                     """
-                    SELECT peer, title, availability, checked_at, error
+                    SELECT peer, title, category, availability, checked_at, error
                     FROM automation_sources ORDER BY added_at, peer
                     """
                 )
@@ -324,6 +363,7 @@ class MigrationState:
                 Source(
                     peer=str(row.peer),
                     title=str(row.title),
+                    category=str(row.category),
                     availability=str(row.availability),
                     checked_at=(
                         datetime.fromisoformat(str(row.checked_at))
@@ -384,8 +424,8 @@ class MigrationState:
             return default if value is None else str(value)
 
     def set_slot(self, slot: Slot) -> None:
-        if slot.kind not in {"any", "video", "image"}:
-            raise ValueError("Тип слота: any, video или image.")
+        if slot.kind not in {"any", "video", "image", "news"}:
+            raise ValueError("Тип слота: any, video, image или news.")
         with self._engine.begin() as connection:
             connection.execute(
                 text(
@@ -430,9 +470,12 @@ class MigrationState:
         published_at: datetime,
         fingerprint: str | None = None,
         status: str = "pending",
+        content_category: str = "content",
     ) -> QueueItem | None:
         if status not in {"pending", "candidate"}:
             raise ValueError("Новый пост может быть pending или candidate.")
+        if content_category not in CONTENT_CATEGORIES:
+            raise ValueError("Категория публикации: content или news.")
         item_id = uuid.uuid4().hex[:12]
         params = {
             "id": item_id,
@@ -440,6 +483,7 @@ class MigrationState:
             "post_key": post_key,
             "message_ids": json.dumps([int(value) for value in message_ids]),
             "media_kind": media_kind,
+            "content_category": content_category,
             "score": int(score),
             "published_at": published_at.isoformat(),
             "status": status,
@@ -463,11 +507,13 @@ class MigrationState:
                 text(
                     """
                     INSERT INTO automation_queue (
-                        id, source, post_key, message_ids, media_kind, score,
+                        id, source, post_key, message_ids, media_kind,
+                        content_category, score,
                         published_at, status, created_at
                     ) VALUES (
                         :id, :source, :post_key, :message_ids, :media_kind,
-                        :score, :published_at, :status, :created_at
+                        :content_category, :score, :published_at, :status,
+                        :created_at
                     )
                     ON CONFLICT (source, post_key) DO NOTHING
                     """
@@ -514,6 +560,7 @@ class MigrationState:
             post_key=str(row["post_key"]),
             message_ids=tuple(int(value) for value in json.loads(row["message_ids"])),
             media_kind=str(row["media_kind"]),
+            content_category=str(row["content_category"]),
             score=int(row["score"]),
             published_at=published_at,
             status=str(row["status"]),
@@ -555,6 +602,7 @@ class MigrationState:
         media_kind: str = "any",
         source: str | None = None,
         *,
+        content_category: str | None = None,
         limit: int = 120,
     ) -> list[QueueItem]:
         clauses = ["status = 'pending'"]
@@ -565,6 +613,11 @@ class MigrationState:
         if source is not None:
             clauses.append("source = :source")
             params["source"] = str(source)
+        if content_category is not None:
+            if content_category not in CONTENT_CATEGORIES:
+                raise ValueError("Категория публикации: content или news.")
+            clauses.append("content_category = :content_category")
+            params["content_category"] = content_category
         where = " AND ".join(clauses)
         with self._engine.connect() as connection:
             rows = connection.execute(
@@ -584,6 +637,7 @@ class MigrationState:
         media_kind: str = "any",
         source: str | None = None,
         *,
+        content_category: str | None = None,
         limit: int = 1000,
     ) -> list[QueueItem]:
         clauses = ["status IN ('pending', 'candidate')"]
@@ -594,6 +648,11 @@ class MigrationState:
         if source is not None:
             clauses.append("source = :source")
             params["source"] = str(source)
+        if content_category is not None:
+            if content_category not in CONTENT_CATEGORIES:
+                raise ValueError("Категория публикации: content или news.")
+            clauses.append("content_category = :content_category")
+            params["content_category"] = content_category
         with self._engine.connect() as connection:
             rows = connection.execute(
                 text(
@@ -899,21 +958,49 @@ class MigrationState:
             )
             return {str(row.status): int(row.total) for row in rows}
 
-    def pending_count(self) -> int:
-        return self.queue_counts().get("pending", 0)
+    def pending_count(self, content_category: str | None = None) -> int:
+        clauses = ["status = 'pending'"]
+        params: dict[str, str] = {}
+        if content_category is not None:
+            if content_category not in CONTENT_CATEGORIES:
+                raise ValueError("Категория публикации: content или news.")
+            clauses.append("content_category = :content_category")
+            params["content_category"] = content_category
+        with self._engine.connect() as connection:
+            value = connection.execute(
+                text(
+                    "SELECT COUNT(*) FROM automation_queue WHERE "
+                    + " AND ".join(clauses)
+                ),
+                params,
+            ).scalar_one()
+            return int(value)
 
-    def expire_pending_before(self, cutoff: datetime) -> int:
+    def expire_pending_before(
+        self,
+        cutoff: datetime,
+        content_category: str | None = None,
+    ) -> int:
+        clauses = [
+            "status IN ('pending', 'candidate')",
+            "published_at < :cutoff",
+        ]
+        params = {"cutoff": cutoff.isoformat()}
+        if content_category is not None:
+            if content_category not in CONTENT_CATEGORIES:
+                raise ValueError("Категория публикации: content или news.")
+            clauses.append("content_category = :content_category")
+            params["content_category"] = content_category
         with self._engine.begin() as connection:
             result = connection.execute(
                 text(
-                    """
+                    f"""
                     UPDATE automation_queue
                     SET status = 'expired', error = NULL
-                    WHERE status IN ('pending', 'candidate')
-                      AND published_at < :cutoff
+                    WHERE {' AND '.join(clauses)}
                     """
                 ),
-                {"cutoff": cutoff.isoformat()},
+                params,
             )
             return int(result.rowcount)
 

@@ -27,8 +27,8 @@ class StateTests(unittest.TestCase):
             self.assertTrue(state.add_source("animeworldmem", "Anime World"))
             self.assertFalse(state.add_source("animeworldmem", "Duplicate"))
             self.assertEqual(
-                [(source.peer, source.title) for source in state.sources()],
-                [("animeworldmem", "Anime World")],
+                [(source.peer, source.title, source.category) for source in state.sources()],
+                [("animeworldmem", "Anime World", "content")],
             )
             state.set_setting("signature_text", "КАНАЛ")
             self.assertEqual(state.get_setting("signature_text"), "КАНАЛ")
@@ -36,9 +36,14 @@ class StateTests(unittest.TestCase):
             state.set_slot(Slot("14:00", "video", "animeworldmem"))
             state.set_slot(Slot("08:00", "any", None))
             state.set_slot(Slot("14:00", "image", None))
+            state.set_slot(Slot("16:00", "news", None))
             self.assertEqual(
                 state.slots(),
-                [Slot("08:00", "any", None), Slot("14:00", "image", None)],
+                [
+                    Slot("08:00", "any", None),
+                    Slot("14:00", "image", None),
+                    Slot("16:00", "news", None),
+                ],
             )
             self.assertTrue(state.remove_slot("14:00"))
             self.assertFalse(state.remove_slot("14:00"))
@@ -109,15 +114,51 @@ class StateTests(unittest.TestCase):
             self.assertEqual(saved.preview_mime, "image/webp")
             self.assertEqual(saved.preview_data, b"preview")
             source = state.sources()[0]
+            self.assertEqual(source.category, "content")
             self.assertEqual(source.availability, "available")
             self.assertIsNotNone(source.checked_at)
             self.assertIsNone(source.error)
+            self.assertEqual(saved.content_category, "content")
             with self.assertRaisesRegex(ValueError, "131072"):
                 state.update_post_metadata(
                     item.id,
                     preview_mime="image/webp",
                     preview_data=b"x" * 131_073,
                 )
+            state.close()
+
+    def test_source_category_updates_only_unprocessed_queue_items(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            self.assertTrue(state.add_source("anime-news", "Anime News", "news"))
+            self.assertEqual(state.sources()[0].category, "news")
+            published_at = datetime.now(timezone.utc)
+            pending = state.enqueue(
+                "anime-news", "message:1", (1,), "image", 10, published_at,
+                content_category="news",
+            )
+            candidate = state.enqueue(
+                "anime-news", "message:2", (2,), "video", 9, published_at,
+                content_category="news", status="candidate",
+            )
+            published = state.enqueue(
+                "anime-news", "message:3", (3,), "any", 8, published_at,
+                content_category="news",
+            )
+            state.claim_item(published.id)
+            state.complete(published.id, "mid")
+
+            self.assertTrue(state.set_source_category("anime-news", "content"))
+
+            self.assertEqual(state.queue_item(pending.id).content_category, "content")
+            self.assertEqual(state.queue_item(candidate.id).content_category, "content")
+            self.assertEqual(state.queue_item(published.id).content_category, "news")
+            self.assertEqual(
+                [item.id for item in state.pending_items(content_category="content")],
+                [pending.id],
+            )
+            with self.assertRaisesRegex(ValueError, "content или news"):
+                state.set_source_category("anime-news", "unknown")
             state.close()
 
     def test_queue_deduplicates_claims_and_records_delivery(self):
