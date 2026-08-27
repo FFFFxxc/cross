@@ -24,11 +24,21 @@ describe("dashboard mutations", () => {
   });
 
   it("validates source links, scans and schedule slots", () => {
-    expect(sourceInput.parse({ operation: "add", source: "https://t.me/anime_world" })).toBeTruthy();
+    expect(sourceInput.parse({
+      operation: "add",
+      source: "https://t.me/anime_world",
+      category: "news",
+    })).toBeTruthy();
+    expect(sourceInput.parse({
+      operation: "set_category",
+      source: "anime_world",
+      category: "content",
+    })).toBeTruthy();
     expect(() => sourceInput.parse({ operation: "add", source: "javascript:alert(1)" })).toThrow();
     expect(scanInput.parse({ count: 50, mediaKind: "video", start: "2026-08-01" })).toBeTruthy();
     expect(() => scanInput.parse({ count: 0 })).toThrow();
     expect(scheduleInput.parse({ time: "14:00", mediaKind: "video" })).toBeTruthy();
+    expect(scheduleInput.parse({ time: "16:00", mediaKind: "news" })).toBeTruthy();
     expect(() => scheduleInput.parse({ time: "25:70", mediaKind: "audio" })).toThrow();
   });
 
@@ -36,6 +46,7 @@ describe("dashboard mutations", () => {
     expect(
       settingsInput.parse({
         freshDays: 7,
+        newsFreshDays: 3,
         minReactions: 0,
         minViews: 5000,
         signatureText: "НАШ ТГК",
@@ -43,6 +54,7 @@ describe("dashboard mutations", () => {
       }),
     ).toBeTruthy();
     expect(() => settingsInput.parse({ freshDays: 91 })).toThrow();
+    expect(() => settingsInput.parse({ newsFreshDays: 8 })).toThrow();
     expect(() => settingsInput.parse({ minViews: -1 })).toThrow();
     expect(() => settingsInput.parse({ signatureUrl: "javascript:bad" })).toThrow();
   });

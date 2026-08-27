@@ -16,8 +16,9 @@ const telegramSource = z.string().trim().min(2).max(200).refine(
 );
 
 export const sourceInput = z.object({
-  operation: z.enum(["add", "remove"]),
+  operation: z.enum(["add", "remove", "set_category"]),
   source: telegramSource,
+  category: z.enum(["content", "news"]).default("content"),
 });
 
 const dateText = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Дата: ГГГГ-ММ-ДД.");
@@ -25,7 +26,7 @@ const dateText = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Дата: ГГГГ-М�
 export const scanInput = z.object({
   count: z.number().int().min(1).max(1000),
   source: telegramSource.optional(),
-  mediaKind: z.enum(["any", "video", "image"]).default("any"),
+  mediaKind: z.enum(["any", "video", "image", "news"]).default("any"),
   start: dateText.optional(),
   end: dateText.optional(),
 }).refine((value) => !value.start || !value.end || value.start <= value.end, {
@@ -34,12 +35,13 @@ export const scanInput = z.object({
 
 export const scheduleInput = z.object({
   time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/, "Время: ЧЧ:ММ."),
-  mediaKind: z.enum(["any", "video", "image"]),
+  mediaKind: z.enum(["any", "video", "image", "news"]),
   source: z.string().trim().min(1).max(200).nullable().optional(),
 });
 
 export const settingsInput = z.object({
   freshDays: z.number().int().min(1).max(90).optional(),
+  newsFreshDays: z.number().int().min(1).max(7).optional(),
   minReactions: z.number().int().min(0).max(1_000_000).optional(),
   minViews: z.number().int().min(0).max(1_000_000).optional(),
   signatureText: z.string().trim().min(1).max(200).optional(),

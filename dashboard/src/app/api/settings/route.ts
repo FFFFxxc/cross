@@ -5,6 +5,7 @@ import { query } from "@/lib/db";
 
 export const SETTING_KEYS = [
   "fresh_days",
+  "news_fresh_days",
   "min_reactions",
   "min_views",
   "signature_text",
@@ -25,6 +26,7 @@ export async function GET() {
 
 const SETTING_FIELDS = {
   freshDays: "fresh_days",
+  newsFreshDays: "news_fresh_days",
   minReactions: "min_reactions",
   minViews: "min_views",
   signatureText: "signature_text",

@@ -33,6 +33,7 @@ export async function GET() {
         "scheduler_heartbeat_at",
         "scheduler_last_error",
         "fresh_days",
+        "news_fresh_days",
         "min_reactions",
         "min_views",
       ]],
@@ -52,6 +53,7 @@ export async function GET() {
     queue: Object.fromEntries(counts.map((item) => [item.status, Number(item.total)])),
     settings: {
       freshDays: Number(values.fresh_days || 0),
+      newsFreshDays: Number(values.news_fresh_days || 3),
       minReactions: Number(values.min_reactions || 0),
       minViews: Number(values.min_views || 0),
     },
