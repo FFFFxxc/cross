@@ -672,6 +672,7 @@ class MigrationState:
         media_kind: str = "any",
         source: str | None = None,
         *,
+        content_category: str | None = None,
         limit: int = 120,
     ) -> list[QueueItem]:
         clauses = [
@@ -685,6 +686,11 @@ class MigrationState:
         if source is not None:
             clauses.append("source = :source")
             params["source"] = str(source)
+        if content_category is not None:
+            if content_category not in CONTENT_CATEGORIES:
+                raise ValueError("Категория публикации: content или news.")
+            clauses.append("content_category = :content_category")
+            params["content_category"] = content_category
         with self._engine.connect() as connection:
             rows = connection.execute(
                 text(
