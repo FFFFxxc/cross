@@ -8,6 +8,10 @@ import type { DashboardSource } from "./source-manager";
 export function ScanForm({ sources }: { sources: DashboardSource[] }) {
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("");
+  const [mediaKind, setMediaKind] = useState("any");
+  const [source, setSource] = useState("");
+  const category = mediaKind === "news" ? "news" : "content";
+  const compatibleSources = sources.filter((item) => item.category === category);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
@@ -36,8 +40,8 @@ export function ScanForm({ sources }: { sources: DashboardSource[] }) {
       <h2>Наполнить очередь</h2>
       <form className="form-grid" onSubmit={submit}>
         <label>Количество<input name="count" type="number" min="1" max="1000" defaultValue="50" /></label>
-        <label>Источник<select name="source"><option value="">Все</option>{sources.map((source) => <option key={source.peer} value={source.peer}>{source.title}</option>)}</select></label>
-        <label>Тип<select name="mediaKind" defaultValue="any"><option value="any">Любой</option><option value="video">Видео</option><option value="image">Картинка</option></select></label>
+        <label>Источник сбора<select name="source" value={source} onChange={(event) => setSource(event.target.value)}><option value="">Все</option>{compatibleSources.map((item) => <option key={item.peer} value={item.peer}>{item.title}</option>)}</select></label>
+        <label>Тип сбора<select name="mediaKind" value={mediaKind} onChange={(event) => { setMediaKind(event.target.value); setSource(""); }}><option value="any">Любой</option><option value="video">Видео</option><option value="image">Картинка</option><option value="news">Новости</option></select></label>
         <label>С даты<input name="start" type="date" /></label>
         <label>По дату<input name="end" type="date" /></label>
         <button className="primary" disabled={pending}>{pending ? "Запускаю…" : "Собрать посты"}</button>

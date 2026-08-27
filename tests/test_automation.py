@@ -564,6 +564,72 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(added, 1)
         self.assertEqual(self.state.claim().message_ids, (2,))
 
+    async def test_news_parse_uses_only_news_sources_and_three_day_window(self):
+        now = datetime.now(timezone.utc)
+        self.state.add_source("anime-news", "Anime News", "news")
+        client = FakeClient(
+            {
+                "animeworldmem": [message(1, views=99_000, published_at=now)],
+                "anime-news": [
+                    message(3, published_at=now - timedelta(hours=2)),
+                    message(2, views=50_000, published_at=now - timedelta(days=4)),
+                ],
+            }
+        )
+        controller, _ = await self.controller(client)
+
+        added = await controller.parse_latest(5, required_kind="news")
+
+        self.assertEqual(added, 1)
+        news = self.state.pool_items(content_category="news")
+        self.assertEqual([(item.source, item.message_ids) for item in news], [
+            ("anime-news", (3,)),
+        ])
+        self.assertEqual(self.state.pool_items(content_category="content"), [])
+
+    async def test_news_publish_prefers_newest_and_ignores_thresholds(self):
+        now = datetime.now(timezone.utc)
+        older = self.state.enqueue(
+            "anime-news", "message:1", (1,), "image", 999_999,
+            now - timedelta(days=1), content_category="news",
+        )
+        newest = self.state.enqueue(
+            "anime-news", "message:2", (2,), "video", 1,
+            now - timedelta(minutes=5), content_category="news",
+        )
+        self.state.set_setting("min_reactions", "100000")
+        self.state.set_setting("min_views", "100000")
+        controller, publisher = await self.controller()
+
+        published = await controller.publish_next("news", refill=False)
+
+        self.assertEqual(published.id, newest.id)
+        self.assertEqual([item.id for item in publisher.calls], [newest.id])
+        self.assertIn(
+            self.state.queue_item(older.id).status,
+            {"pending", "candidate"},
+        )
+
+    async def test_news_publish_expires_only_stale_news(self):
+        now = datetime.now(timezone.utc)
+        stale_news = self.state.enqueue(
+            "anime-news", "message:1", (1,), "image", 100,
+            now - timedelta(days=4), content_category="news",
+        )
+        fresh_content = self.state.enqueue(
+            "animeworldmem", "message:2", (2,), "image", 1,
+            now - timedelta(days=4), content_category="content",
+        )
+        controller, _ = await self.controller(fresh_days=30)
+
+        self.assertIsNone(await controller.publish_next("news", refill=False))
+
+        self.assertEqual(self.state.queue_item(stale_news.id).status, "expired")
+        self.assertIn(
+            self.state.queue_item(fresh_content.id).status,
+            {"pending", "candidate"},
+        )
+
     async def test_publish_skips_stale_items_already_in_queue(self):
         now = datetime.now(timezone.utc)
         stale = self.state.enqueue(
@@ -714,6 +780,26 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(self.state.get_setting("fresh_days"), "7")
         self.assertIn("7", show.responses[-1])
+
+    async def test_news_commands_add_categorize_and_schedule_source(self):
+        controller, _ = await self.controller()
+
+        await controller.handle_command(
+            Event(),
+            "/add_source https://t.me/anime_news news",
+        )
+        await controller.handle_command(
+            Event(),
+            "/source_category animeworldmem news",
+        )
+        await controller.handle_command(Event(), "/news_fresh_days 2")
+        await controller.handle_command(Event(), "/slot 16:00 news anime_news")
+
+        categories = {source.peer: source.category for source in self.state.sources()}
+        self.assertEqual(categories["anime_news"], "news")
+        self.assertEqual(categories["animeworldmem"], "news")
+        self.assertEqual(self.state.get_setting("news_fresh_days"), "2")
+        self.assertIn(Slot("16:00", "news", "anime_news"), self.state.slots())
 
     async def test_max_status_reports_official_channel_id(self):
         controller, publisher = await self.controller()

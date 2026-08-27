@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { api } from "@/lib/client-api";
 
 type Slot = { time: string; mediaKind: string; source: string | null };
-type Source = { peer: string; title: string };
+type Source = { peer: string; title: string; category: "content" | "news" };
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 
 export function ScheduleEditor({ initialSlots, sources }: { initialSlots: Slot[]; sources: Source[] }) {
@@ -57,8 +57,13 @@ export function ScheduleEditor({ initialSlots, sources }: { initialSlots: Slot[]
         {ordered.map((slot) => (
           <div className="slot-row panel" key={slot.time}>
             <strong data-testid="slot-time">{slot.time}</strong>
-            <label>Тип поста<select aria-label="Тип поста" value={slot.mediaKind} onChange={(event) => update(slot.time, { mediaKind: event.target.value })}><option value="any">Любой</option><option value="video">Видео</option><option value="image">Картинка</option></select></label>
-            <label>Источник<select aria-label="Источник слота" value={slot.source || ""} onChange={(event) => update(slot.time, { source: event.target.value || null })}><option value="">Любой</option>{sources.map((source) => <option key={source.peer} value={source.peer}>{source.title}</option>)}</select></label>
+            <label>Тип поста<select aria-label="Тип поста" value={slot.mediaKind} onChange={(event) => {
+              const mediaKind = event.target.value;
+              const category = mediaKind === "news" ? "news" : "content";
+              const source = sources.some((item) => item.peer === slot.source && item.category === category) ? slot.source : null;
+              update(slot.time, { mediaKind, source });
+            }}><option value="any">Любой</option><option value="video">Видео</option><option value="image">Картинка</option><option value="news">Новости</option></select></label>
+            <label>Источник<select aria-label="Источник слота" value={slot.source || ""} onChange={(event) => update(slot.time, { source: event.target.value || null })}><option value="">Любой</option>{sources.filter((source) => source.category === (slot.mediaKind === "news" ? "news" : "content")).map((source) => <option key={source.peer} value={source.peer}>{source.title}</option>)}</select></label>
             <button type="button" className="primary" onClick={() => save(slot)}>Сохранить</button>
             <button type="button" onClick={() => remove(slot.time)}>Удалить</button>
           </div>

@@ -5,12 +5,13 @@ import { FormEvent, useState } from "react";
 import { api } from "@/lib/client-api";
 
 type Settings = Partial<Record<
-  "fresh_days" | "min_reactions" | "min_views" | "signature_text" | "signature_url",
+  "fresh_days" | "news_fresh_days" | "min_reactions" | "min_views" | "signature_text" | "signature_url",
   string
 >>;
 
 export function SettingsForm({ initial }: { initial: Settings }) {
   const [freshDays, setFreshDays] = useState(initial.fresh_days || "7");
+  const [newsFreshDays, setNewsFreshDays] = useState(initial.news_fresh_days || "3");
   const [minReactions, setMinReactions] = useState(initial.min_reactions || "0");
   const [minViews, setMinViews] = useState(initial.min_views || "0");
   const [signatureText, setSignatureText] = useState(initial.signature_text || "НАШ ТГК");
@@ -34,6 +35,7 @@ export function SettingsForm({ initial }: { initial: Settings }) {
         method: "PUT",
         body: JSON.stringify({
           freshDays: Number(freshDays),
+          newsFreshDays: Number(newsFreshDays),
           minReactions: Number(minReactions),
           minViews: Number(minViews),
           signatureText,
@@ -62,6 +64,7 @@ export function SettingsForm({ initial }: { initial: Settings }) {
     <form className="settings-form panel" onSubmit={submit}>
       <div className="form-grid">
         <label>Свежесть, дней<input aria-label="Свежесть, дней" type="number" min="1" max="90" value={freshDays} onChange={(event) => setFreshDays(event.target.value)} /></label>
+        <label>Свежесть новостей, дней<input aria-label="Свежесть новостей, дней" type="number" min="1" max="7" value={newsFreshDays} onChange={(event) => setNewsFreshDays(event.target.value)} /></label>
         <label>Минимум реакций<input aria-label="Минимум реакций" type="number" min="0" max="1000000" value={minReactions} onChange={(event) => setMinReactions(event.target.value)} />{Number(minReactions) === 0 ? <small>без ограничения</small> : null}</label>
         <label>Минимум просмотров<input aria-label="Минимум просмотров" type="number" min="0" max="1000000" value={minViews} onChange={(event) => setMinViews(event.target.value)} />{Number(minViews) === 0 ? <small>без ограничения</small> : null}</label>
         <label>Текст подписи<input aria-label="Текст подписи" value={signatureText} onChange={(event) => setSignatureText(event.target.value)} /></label>

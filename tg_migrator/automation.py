@@ -39,7 +39,8 @@ SLOT_GRACE = timedelta(days=1)
 
 HELP = """Управление Desiree:
 
-/add_source ССЫЛКА — добавить источник
+/add_source ССЫЛКА [content|news] — добавить источник
+/source_category ИСТОЧНИК content|news — изменить категорию
 /del_source ИСТОЧНИК — удалить источник
 /sources — список источников
 /parse [КОЛИЧЕСТВО] [ИСТОЧНИК] — наполнить очередь
@@ -47,12 +48,13 @@ HELP = """Управление Desiree:
 /parse_period ДАТА ДАТА [КОЛИЧЕСТВО] — собрать за период
 /parse_top ДНЕЙ КОЛИЧЕСТВО [ИСТОЧНИК] — самые активные
 /fresh_days [ДНЕЙ] — показать/изменить окно свежести
+/news_fresh_days [ДНЕЙ] — свежесть новостей (1–7)
 /transfer КОЛИЧЕСТВО — собрать и опубликовать сейчас
 /transfer_from ДАТА — собрать с даты и опубликовать
 /queue — состояние очереди
-/now [any|video|image] [ИСТОЧНИК] — публикация сейчас
+/now [any|video|image|news] [ИСТОЧНИК] — публикация сейчас
 /times [08:00,10:00,...] — показать/заменить расписание
-/slot ЧЧ:ММ any|video|image [ИСТОЧНИК] — настроить слот
+/slot ЧЧ:ММ any|video|image|news [ИСТОЧНИК] — настроить слот
 /unslot ЧЧ:ММ — удалить слот
 /signature ТЕКСТ | URL — изменить единственную подпись MAX
 /max_status — показать официальный chat_id MAX-канала
@@ -104,6 +106,26 @@ class AutomationController:
 
     def _fresh_cutoff(self) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=self._fresh_days())
+
+    def _news_fresh_days(self) -> int:
+        try:
+            return min(
+                7,
+                max(1, int(self.state.get_setting("news_fresh_days", "3") or 3)),
+            )
+        except (TypeError, ValueError):
+            return 3
+
+    def _news_fresh_cutoff(self) -> datetime:
+        return datetime.now(timezone.utc) - timedelta(days=self._news_fresh_days())
+
+    @staticmethod
+    def _kind_filters(kind: str) -> tuple[str, str]:
+        if kind == "news":
+            return "any", "news"
+        if kind not in {"any", "video", "image"}:
+            raise ValueError("Тип публикации: any, video, image или news.")
+        return kind, "content"
 
     async def initialize(self) -> None:
         self.account_id = int((await self.client.get_me()).id)
@@ -177,7 +199,13 @@ class AutomationController:
             except Exception:
                 pass
 
-    async def add_source(self, raw: str) -> tuple[str, bool]:
+    async def add_source(
+        self,
+        raw: str,
+        category: str = "content",
+    ) -> tuple[str, bool]:
+        if category not in {"content", "news"}:
+            raise ValueError("Категория источника: content или news.")
         value = raw.strip()
         entity = None
         invite = re.search(r"(?:joinchat/|t\.me/\+)([^/?]+)", value, re.I)
@@ -195,9 +223,17 @@ class AutomationController:
             raise ValueError("Telegram не вернул добавленный канал.")
         peer = getattr(entity, "username", None) or str(_entity_peer_id(entity))
         title = getattr(entity, "title", None) or str(peer)
-        added = self.state.add_source(str(peer), str(title))
+        added = self.state.add_source(str(peer), str(title), category)
+        if not added:
+            self.state.set_source_category(str(peer), category)
         self._chat_sources[_entity_peer_id(entity)] = str(peer)
         return str(peer), added
+
+    async def set_source_category(self, raw: str, category: str) -> bool:
+        peer = str(normalize_peer(raw))
+        if category not in {"content", "news"}:
+            raise ValueError("Категория источника: content или news.")
+        return self.state.set_source_category(peer, category)
 
     async def remove_source(self, raw: str) -> bool:
         peer = str(normalize_peer(raw))
@@ -210,14 +246,30 @@ class AutomationController:
             }
         return removed
 
-    def _selected_sources(self, raw: str | None = None) -> list[str]:
-        available = [source.peer for source in self.state.sources()]
+    def _selected_sources(
+        self,
+        raw: str | None = None,
+        category: str = "content",
+    ) -> list[str]:
+        available = [
+            source.peer for source in self.state.sources()
+            if source.category == category
+        ]
         if raw is None:
             return available
         peer = str(normalize_peer(raw))
         if peer not in available:
-            raise ValueError("Такого источника нет. Сначала используйте /add_source.")
+            raise ValueError(
+                "Такого источника в выбранной категории нет. "
+                "Проверьте /sources или /source_category."
+            )
         return [peer]
+
+    def _source_category(self, peer: str) -> str:
+        for source in self.state.sources():
+            if source.peer == peer:
+                return source.category
+        return "content"
 
     async def _enqueue_posts(
         self,
@@ -225,6 +277,7 @@ class AutomationController:
         posts,
         limit: int | None = None,
         status: str = "candidate",
+        content_category: str | None = None,
     ) -> int:
         added = 0
         for post in posts:
@@ -239,6 +292,9 @@ class AutomationController:
                 post.published_at,
                 fingerprint=post_fingerprint(post),
                 status=status,
+                content_category=(
+                    content_category or self._source_category(source)
+                ),
             )
             if item is not None:
                 metrics = post_metrics(post)
@@ -269,10 +325,15 @@ class AutomationController:
     ) -> int:
         if count <= 0:
             raise ValueError("Количество должно быть больше нуля.")
-        peers = self._selected_sources(source)
+        media_kind, content_category = self._kind_filters(required_kind)
+        peers = self._selected_sources(source, content_category)
         read_count = scan_count or self.config.scan_limit
         ranked: dict[str, list] = {}
-        cutoff = self._fresh_cutoff()
+        cutoff = (
+            self._news_fresh_cutoff()
+            if content_category == "news"
+            else self._fresh_cutoff()
+        )
         for peer in peers:
             posts = await latest_posts(
                 self.client.iter_messages(peer, limit=read_count),
@@ -289,11 +350,15 @@ class AutomationController:
                 >= cutoff
             ]
             posts.sort(
-                key=lambda post: (post_smart_score(post), post.published_at),
+                key=(
+                    (lambda post: (post.published_at, post_smart_score(post)))
+                    if content_category == "news"
+                    else (lambda post: (post_smart_score(post), post.published_at))
+                ),
                 reverse=True,
             )
-            if required_kind != "any":
-                posts = [post for post in posts if post_media_kind(post) == required_kind]
+            if media_kind != "any":
+                posts = [post for post in posts if post_media_kind(post) == media_kind]
             ranked[peer] = posts
 
         total = 0
@@ -306,7 +371,12 @@ class AutomationController:
                     progressed = True
                     post = posts[positions[peer]]
                     positions[peer] += 1
-                    added = await self._enqueue_posts(peer, [post], 1)
+                    added = await self._enqueue_posts(
+                        peer,
+                        [post],
+                        1,
+                        content_category=content_category,
+                    )
                     if added:
                         total += added
                         break
@@ -325,21 +395,31 @@ class AutomationController:
         required_kind: str = "any",
     ) -> int:
         total = 0
-        for peer in self._selected_sources(source):
+        media_kind, content_category = self._kind_filters(required_kind)
+        for peer in self._selected_sources(source, content_category):
             posts = await posts_from_date(self.client.iter_messages(peer), start)
             if end is not None:
                 posts = [post for post in posts if post.published_at < end]
-            if required_kind != "any":
+            if media_kind != "any":
                 posts = [
                     post for post in posts
-                    if post_media_kind(post) == required_kind
+                    if post_media_kind(post) == media_kind
                 ]
-            if top:
+            if top or content_category == "news":
                 posts.sort(
-                    key=lambda post: (post_smart_score(post), post.published_at),
+                    key=(
+                        (lambda post: (post.published_at, post_smart_score(post)))
+                        if content_category == "news"
+                        else (lambda post: (post_smart_score(post), post.published_at))
+                    ),
                     reverse=True,
                 )
-            total += await self._enqueue_posts(peer, posts, count - total)
+            total += await self._enqueue_posts(
+                peer,
+                posts,
+                count - total,
+                content_category=content_category,
+            )
             if total >= count or self._cancel.is_set():
                 break
         self._rebalance_queue()
@@ -352,10 +432,16 @@ class AutomationController:
         required_kind: str = "any",
         source: str | None = None,
     ) -> int:
-        self.state.expire_pending_before(self._fresh_cutoff())
+        _, content_category = self._kind_filters(required_kind)
+        cutoff = (
+            self._news_fresh_cutoff()
+            if content_category == "news"
+            else self._fresh_cutoff()
+        )
+        self.state.expire_pending_before(cutoff, content_category)
         await self._refresh_pending_scores(required_kind, source)
         self._rebalance_queue()
-        pending = self.state.pending_count()
+        pending = self.state.pending_count(content_category)
         if not force and pending >= self.config.queue_minimum:
             return 0
         wanted = self.config.scan_limit if force else self.config.queue_minimum - pending
@@ -373,7 +459,13 @@ class AutomationController:
         *,
         refill: bool = True,
     ) -> QueueItem | None:
-        self.state.expire_pending_before(self._fresh_cutoff())
+        _, content_category = self._kind_filters(kind)
+        cutoff = (
+            self._news_fresh_cutoff()
+            if content_category == "news"
+            else self._fresh_cutoff()
+        )
+        self.state.expire_pending_before(cutoff, content_category)
         source = str(normalize_peer(source)) if source is not None else None
         await self._refresh_pending_scores(kind, source)
         self._rebalance_queue()
@@ -407,11 +499,22 @@ class AutomationController:
         kind: str = "any",
         source: str | None = None,
     ) -> QueueItem | None:
+        media_kind, content_category = self._kind_filters(kind)
         candidates = self.state.pending_items(
-            kind,
+            media_kind,
             source,
-            limit=max(self.config.scan_limit, self.state.pending_count()),
+            content_category=content_category,
+            limit=max(
+                self.config.scan_limit,
+                self.state.pending_count(content_category),
+            ),
         )
+        if content_category == "news":
+            candidates.sort(
+                key=lambda item: (item.published_at, item.score),
+                reverse=True,
+            )
+            return self.state.claim_item(candidates[0].id) if candidates else None
         minimum_reactions = self._non_negative_setting("min_reactions")
         minimum_views = self._non_negative_setting("min_views")
         candidates = [
@@ -446,16 +549,28 @@ class AutomationController:
                 self.config.queue_minimum * 4,
             )
         )
+        news_candidates = sorted(
+            (
+                item for item in candidates
+                if item.content_category == "news"
+            ),
+            key=lambda item: (item.published_at, item.score),
+            reverse=True,
+        )
+        content_candidates = [
+            item for item in candidates
+            if item.content_category == "content"
+        ]
         minimum_reactions = self._non_negative_setting("min_reactions")
         minimum_views = self._non_negative_setting("min_views")
-        candidates = [
+        content_candidates = [
             item
-            for item in candidates
+            for item in content_candidates
             if item.reactions_count >= minimum_reactions
             and item.views_count >= minimum_views
         ]
         by_source: dict[str, list[QueueItem]] = {}
-        for item in candidates:
+        for item in content_candidates:
             by_source.setdefault(item.source, []).append(item)
         for items in by_source.values():
             items.sort(
@@ -475,17 +590,20 @@ class AutomationController:
             source for source in by_source
             if source not in source_order
         )
-        selected: list[str] = []
-        while len(selected) < self.config.queue_minimum:
+        selected: list[str] = [
+            item.id for item in news_candidates[: self.config.queue_minimum]
+        ]
+        selected_content: list[str] = []
+        while len(selected_content) < self.config.queue_minimum:
             progressed = False
             for source_name in source_order:
                 items = by_source[source_name]
-                if items and len(selected) < self.config.queue_minimum:
-                    selected.append(items.pop(0).id)
+                if items and len(selected_content) < self.config.queue_minimum:
+                    selected_content.append(items.pop(0).id)
                     progressed = True
             if not progressed:
                 break
-        self.state.rebalance_pending(selected)
+        self.state.rebalance_pending([*selected, *selected_content])
 
     async def _refresh_pending_scores(
         self,
@@ -500,14 +618,17 @@ class AutomationController:
         kind: str,
         source: str | None,
     ) -> None:
+        media_kind, content_category = self._kind_filters(kind)
         score_items = self.state.pool_items(
-            kind,
+            media_kind,
             source,
+            content_category=content_category,
             limit=self.config.scan_limit * max(1, len(self.state.sources())),
         )
         preview_items = self.state.items_missing_previews(
-            kind,
+            media_kind,
             source,
+            content_category=content_category,
             limit=max(self.config.queue_minimum, self.config.scan_limit),
         )
         items = list(
@@ -650,6 +771,8 @@ class AutomationController:
         while True:
             try:
                 await self.refill()
+                if any(source.category == "news" for source in self.state.sources()):
+                    await self.refill(required_kind="news")
             except Exception as exc:
                 await self.notify(f"Ошибка пополнения очереди: {exc}")
             await asyncio.sleep(self.config.refill_interval)
@@ -720,6 +843,27 @@ class AutomationController:
             f"Окно свежести: {days} дней. Устаревших в очереди: {expired}."
         )
 
+    async def _news_fresh_days_command(self, event, arguments: list[str]) -> None:
+        if not arguments:
+            await event.respond(
+                f"Свежесть новостей: {self._news_fresh_days()} дней."
+            )
+            return
+        if len(arguments) != 1:
+            raise ValueError("Свежесть новостей: одно число от 1 до 7 дней.")
+        days = int(arguments[0])
+        if not 1 <= days <= 7:
+            raise ValueError("Свежесть новостей: одно число от 1 до 7 дней.")
+        self.state.set_setting("news_fresh_days", str(days))
+        expired = self.state.expire_pending_before(
+            self._news_fresh_cutoff(),
+            "news",
+        )
+        await event.respond(
+            f"Свежесть новостей: {days} дней. "
+            f"Устаревших новостей в очереди: {expired}."
+        )
+
     async def handle_command(self, event, raw_text: str) -> bool:
         if not self.is_authorized(event):
             return False
@@ -749,14 +893,35 @@ class AutomationController:
                 self._cancel.set()
                 await event.respond("Останавливаю после текущей операции.")
             elif command == "sources":
-                rows = [f"• {source.title} — {source.peer}" for source in self.state.sources()]
+                rows = [
+                    f"• {source.title} — {source.peer} — "
+                    f"{'новости' if source.category == 'news' else 'обычный'}"
+                    for source in self.state.sources()
+                ]
                 await event.respond("Источники:\n" + ("\n".join(rows) or "нет"))
             elif command == "add_source":
-                if not tail:
-                    raise ValueError("Укажите ссылку или @username источника.")
-                peer, added = await self.add_source(tail)
+                if not arguments or len(arguments) > 2:
+                    raise ValueError(
+                        "Формат: /add_source ССЫЛКА [content|news]."
+                    )
+                category = arguments[1].lower() if len(arguments) == 2 else "content"
+                peer, added = await self.add_source(arguments[0], category)
                 await event.respond(
                     f"Источник {peer} добавлен." if added else f"Источник {peer} уже есть."
+                )
+            elif command == "source_category":
+                if len(arguments) != 2:
+                    raise ValueError(
+                        "Формат: /source_category ИСТОЧНИК content|news."
+                    )
+                changed = await self.set_source_category(
+                    arguments[0],
+                    arguments[1].lower(),
+                )
+                await event.respond(
+                    "Категория источника обновлена."
+                    if changed
+                    else "Источник не найден."
                 )
             elif command == "del_source":
                 if not tail:
@@ -770,12 +935,16 @@ class AutomationController:
                 await self._parse_command(event, command, arguments)
             elif command == "fresh_days":
                 await self._fresh_days_command(event, arguments)
+            elif command == "news_fresh_days":
+                await self._news_fresh_days_command(event, arguments)
             elif command == "queue":
                 await self._respond_queue(event)
             elif command == "now":
                 kind = arguments[0].lower() if arguments else "any"
-                if kind not in {"any", "video", "image"}:
-                    raise ValueError("Тип публикации: any, video или image.")
+                if kind not in {"any", "video", "image", "news"}:
+                    raise ValueError(
+                        "Тип публикации: any, video, image или news."
+                    )
                 source = arguments[1] if len(arguments) > 1 else None
                 item = await self.publish_next(kind, source)
                 await event.respond(
@@ -800,13 +969,19 @@ class AutomationController:
                     await event.respond("Расписание обновлено.")
             elif command == "slot":
                 if len(arguments) < 2:
-                    raise ValueError("Формат: /slot ЧЧ:ММ any|video|image [ИСТОЧНИК].")
+                    raise ValueError(
+                        "Формат: /slot ЧЧ:ММ "
+                        "any|video|image|news [ИСТОЧНИК]."
+                    )
                 run_time, kind = _valid_time(arguments[0]), arguments[1].lower()
-                if kind not in {"any", "video", "image"}:
-                    raise ValueError("Тип слота: any, video или image.")
+                if kind not in {"any", "video", "image", "news"}:
+                    raise ValueError("Тип слота: any, video, image или news.")
                 source = str(normalize_peer(arguments[2])) if len(arguments) > 2 else None
-                if source and source not in self._selected_sources():
-                    raise ValueError("Сначала добавьте источник через /add_source.")
+                category = "news" if kind == "news" else "content"
+                if source and source not in self._selected_sources(category=category):
+                    raise ValueError(
+                        "Источник не относится к категории выбранного слота."
+                    )
                 self.state.set_slot(Slot(run_time, kind, source))
                 await event.respond(f"Слот {run_time}: {kind}" + (f", {source}" if source else ""))
             elif command == "unslot":

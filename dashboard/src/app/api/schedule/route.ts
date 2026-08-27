@@ -23,6 +23,16 @@ export async function PUT(request: Request) {
   try {
     requireSameOrigin(request);
     const input = scheduleInput.parse(await request.json());
+    if (input.source) {
+      const rows = await query<{ category: string }>(
+        "SELECT category FROM automation_sources WHERE peer = $1",
+        [input.source],
+      );
+      const expected = input.mediaKind === "news" ? "news" : "content";
+      if (!rows[0] || rows[0].category !== expected) {
+        throw new Error("Источник не относится к категории выбранного слота.");
+      }
+    }
     await query(
       `INSERT INTO automation_slots (run_time, media_kind, source)
        VALUES ($1, $2, $3)

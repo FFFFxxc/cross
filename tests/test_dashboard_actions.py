@@ -25,17 +25,23 @@ class FakeController:
         self.published = []
         self.scans = []
         self.period_scans = []
+        self.source_categories = []
 
     async def publish_item(self, item_id):
         self.published.append(item_id)
         self.state.complete(item_id, "published-mid")
         return self.state.queue_item(item_id)
 
-    async def add_source(self, source):
+    async def add_source(self, source, category="content"):
         if source == "bad-source":
             raise ValueError("private source denied")
-        self.state.add_source(source, source.title())
+        self.state.add_source(source, source.title(), category)
+        self.source_categories.append((source, category))
         return source, True
+
+    async def set_source_category(self, source, category):
+        self.source_categories.append((source, category))
+        return self.state.set_source_category(source, category)
 
     async def remove_source(self, source):
         return self.state.remove_source(source)
@@ -152,6 +158,27 @@ class DashboardActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(start.astimezone(MOSCOW).date().isoformat(), "2026-08-01")
         self.assertEqual(end.astimezone(MOSCOW).date().isoformat(), "2026-08-06")
         self.assertEqual((count, source, kind), (20, "anime", "image"))
+
+    async def test_source_actions_preserve_news_category(self):
+        add = self.state.enqueue_action(
+            "add_source",
+            {"source": "anime-news", "category": "news"},
+        )
+        change = self.state.enqueue_action(
+            "set_source_category",
+            {"source": "anime-news", "category": "content"},
+        )
+
+        self.assertTrue(await self.runner.run_once())
+        self.assertTrue(await self.runner.run_once())
+
+        self.assertEqual(
+            self.controller.source_categories,
+            [("anime-news", "news"), ("anime-news", "content")],
+        )
+        self.assertEqual(self.state.sources()[0].category, "content")
+        self.assertEqual(self.state.action(add.id).result["category"], "news")
+        self.assertEqual(self.state.action(change.id).result["category"], "content")
 
 
 if __name__ == "__main__":

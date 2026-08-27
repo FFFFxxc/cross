@@ -19,6 +19,7 @@ describe("SettingsForm", () => {
       <SettingsForm
         initial={{
           fresh_days: "7",
+          news_fresh_days: "3",
           min_reactions: "0",
           min_views: "0",
           signature_text: "НАШ ТГК",
@@ -33,6 +34,7 @@ describe("SettingsForm", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       minReactions: 150,
       freshDays: 7,
+      newsFreshDays: 3,
     });
   });
 

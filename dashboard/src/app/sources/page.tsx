@@ -6,6 +6,7 @@ import { query } from "@/lib/db";
 type Row = {
   peer: string;
   title: string;
+  category: "content" | "news";
   availability: string;
   checked_at: string | null;
   error: string | null;
@@ -13,11 +14,12 @@ type Row = {
 
 export default async function SourcesPage() {
   const rows = await query<Row>(
-    "SELECT peer, title, availability, checked_at, error FROM automation_sources ORDER BY added_at, peer",
+    "SELECT peer, title, category, availability, checked_at, error FROM automation_sources ORDER BY added_at, peer",
   );
   const sources: DashboardSource[] = rows.map((row) => ({
     peer: row.peer,
     title: row.title,
+    category: row.category,
     availability: row.availability,
     checkedAt: row.checked_at,
     error: row.error,

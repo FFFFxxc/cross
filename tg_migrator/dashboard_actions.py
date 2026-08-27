@@ -51,9 +51,26 @@ class DashboardActionRunner:
 
         if action.kind == "add_source":
             source = _required_text(payload, "source")
-            peer, added = await self.controller.add_source(source)
+            category = _optional_text(payload, "category") or "content"
+            if category not in {"content", "news"}:
+                raise ValueError("Поле category: content или news.")
+            peer, added = await self.controller.add_source(source, category)
             self.state.update_source_availability(peer, "available")
-            return {"source": peer, "added": bool(added)}
+            return {
+                "source": peer,
+                "added": bool(added),
+                "category": category,
+            }
+
+        if action.kind == "set_source_category":
+            source = _required_text(payload, "source")
+            category = _required_text(payload, "category")
+            if category not in {"content", "news"}:
+                raise ValueError("Поле category: content или news.")
+            changed = await self.controller.set_source_category(source, category)
+            if not changed:
+                raise ValueError("Источник не найден.")
+            return {"source": source, "category": category}
 
         if action.kind == "remove_source":
             source = _required_text(payload, "source")
@@ -64,8 +81,8 @@ class DashboardActionRunner:
             count = _positive_count(payload, "count")
             source = _optional_text(payload, "source")
             kind = _optional_text(payload, "kind") or "any"
-            if kind not in {"any", "video", "image"}:
-                raise ValueError("Поле kind: any, video или image.")
+            if kind not in {"any", "video", "image", "news"}:
+                raise ValueError("Поле kind: any, video, image или news.")
             start_text = _optional_text(payload, "start")
             end_text = _optional_text(payload, "end")
             if end_text and not start_text:
