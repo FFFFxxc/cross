@@ -87,5 +87,11 @@ describe("QueueCard", () => {
       "/api/queue/item-1/ai-caption",
       expect.objectContaining({ method: "POST" }),
     ));
+
+    fireEvent.click(screen.getByRole("button", { name: "Убрать AI-подпись" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/queue/item-1/ai-caption",
+      expect.objectContaining({ method: "DELETE" }),
+    ));
   });
 });

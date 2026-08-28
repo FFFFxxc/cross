@@ -19,16 +19,40 @@ from .state import MigrationState, QueueItem
 
 
 DEFAULT_AI_PROMPT = (
-    "Ты редактор русскоязычного аниме-паблика. Внимательно посмотри на "
-    "изображение или кадр из видео и придумай одну короткую естественную "
-    "подпись строго по его содержанию. Можно добавить лёгкую эмоцию или шутку, "
-    "но нельзя выдумывать имена, названия аниме и факты, которых не видно. "
-    "Не пиши ссылки, рекламу, хэштеги, призывы подписаться, кавычки и слова "
-    "«нейросеть» или «изображение». Верни только готовую подпись на русском."
+    "Ты ведёшь небольшой живой аниме-мем паблик. Посмотри именно на прикреплённую "
+    "картинку и напиши реакцию как обычный человек в чате: 3–9 слов, максимум "
+    "одно короткое предложение. Подойдут простая шутка, узнаваемая эмоция или "
+    "разговорная реплика по тому, что реально видно. Пиши разнообразно; иногда "
+    "достаточно 1–3 слов или одного уместного эмодзи. Не объясняй мем, не "
+    "пересказывай картинку, не используй канцелярит и шаблоны «когда…», «тот "
+    "самый момент…», «вот это…», «логика…». Не называй персонажей и аниме, если "
+    "не уверен. Без ссылок, хэштегов, рекламы, призывов, кавычек и упоминаний ИИ. "
+    "Если картинка недоступна, непонятна или заблокирована, ответь строго SKIP. "
+    "Верни только готовую подпись или SKIP."
 )
 _AAD = b"desiree-ai-provider-v1"
 _URL_RE = re.compile(r"(?i)https?://\S+")
 _HASHTAG_RE = re.compile(r"(?<!\w)#[\wА-Яа-яЁё]+", re.UNICODE)
+_INVALID_CAPTION_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bпришл(?:и|ите)\b.{0,60}\b(?:изображ|картин|фото)",
+        r"\bзагруз(?:и|ите)\b.{0,60}\b(?:изображ|картин|фото)",
+        r"\bопиш(?:и|ите)\b.{0,40}\b(?:его|изображ|картин|фото)",
+        r"\b(?:не вижу|не могу (?:увидеть|просмотреть|проанализировать))\b",
+        r"\b(?:изображение|картинка|фото)\b.{0,30}\b(?:недоступн|не загруз|заблокирован)",
+        r"\bукаж(?:и|ите)\b.{0,30}\b(?:тон|стиль|пожелан)",
+        r"\bя (?:подготовлю|придумаю|создам)\b.{0,40}\bподпис",
+        r"\b(?:вот|готова)\b.{0,20}\b(?:вариант |ваша )?подпис",
+    )
+)
+_STYLE_HINTS = (
+    "Форма этой подписи: 1–3 слова.",
+    "Форма этой подписи: короткая разговорная реакция.",
+    "Форма этой подписи: сухая ирония без объяснений.",
+    "Форма этой подписи: один эмодзи и короткая фраза.",
+    "Форма этой подписи: очень короткий вопрос по ситуации.",
+)
 
 
 class AiCaptionError(RuntimeError):
@@ -137,6 +161,11 @@ def _clean_generated_caption(value: str, max_chars: int) -> str:
     cleaned = _URL_RE.sub("", cleaned)
     cleaned = _HASHTAG_RE.sub("", cleaned)
     cleaned = " ".join(cleaned.split()).strip(" -–—:;,.\n")
+    normalized = cleaned.casefold().strip(" !?.:;,-–—")
+    if normalized == "skip" or any(pattern.search(cleaned) for pattern in _INVALID_CAPTION_PATTERNS):
+        raise AiCaptionError("Модель не смогла распознать изображение.")
+    if len(cleaned.split()) > 12:
+        raise AiCaptionError("Модель вернула слишком длинную подпись.")
     if len(cleaned) > max_chars:
         shortened = cleaned[: max_chars + 1]
         boundary = shortened.rfind(" ")
@@ -231,7 +260,10 @@ class AiCaptionClient:
                         "type": "text",
                         "text": (
                             f"Контекст публикации: {context}. "
-                            f"Подпись должна быть не длиннее {max_chars} символов."
+                            "Изображение уже прикреплено ниже: не проси прислать его. "
+                            "Если не можешь его увидеть, ответь только SKIP. "
+                            f"Подпись должна быть не длиннее {max_chars} символов. "
+                            f"{_STYLE_HINTS[hashlib.sha256(image).digest()[0] % len(_STYLE_HINTS)]}"
                         ),
                     },
                     {
@@ -285,9 +317,9 @@ class AiCaptionService:
 
     def max_chars(self) -> int:
         try:
-            return min(300, max(40, int(self.state.get_setting("ai_max_chars", "140") or 140)))
+            return min(300, max(40, int(self.state.get_setting("ai_max_chars", "75") or 75)))
         except (TypeError, ValueError):
-            return 140
+            return 75
 
     def providers(self) -> list[AiProvider]:
         providers: list[AiProvider] = []
@@ -321,7 +353,7 @@ class AiCaptionService:
         *,
         already_claimed: bool = False,
     ) -> QueueItem:
-        if not self.enabled() or item.ai_caption_status in {"generated", "not_needed", "no_preview"}:
+        if not self.enabled() or item.ai_caption_status in {"generated", "not_needed", "no_preview", "dismissed"}:
             return item
         if item.ai_caption_status == "processing" and not already_claimed:
             for _ in range(20):
