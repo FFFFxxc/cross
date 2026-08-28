@@ -21,7 +21,7 @@ describe("queue AI caption route", () => {
 
   it("resets a caption for regeneration", async () => {
     expect((await POST(request("POST"), context)).status).toBe(200);
-    expect(mocks.query.mock.calls[0][0]).toContain("ai_caption_status = 'unchecked'");
+    expect(mocks.query.mock.calls[0][0]).toContain("ai_caption_status = 'manual'");
   });
 
   it("removes a caption permanently until manual regeneration", async () => {

@@ -11,6 +11,8 @@ const initial = {
   enabled: true,
   prompt: "Посмотри на картинку и придумай подпись",
   maxChars: 140,
+  autoDelaySeconds: 90,
+  intervalSeconds: 20,
   providers: [
     { index: 1 as const, baseUrl: "https://router.example/v1", model: "vision-one", hasKey: true },
     { index: 2 as const, baseUrl: "", model: "", hasKey: false },

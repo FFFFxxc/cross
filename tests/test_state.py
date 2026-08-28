@@ -1,8 +1,10 @@
 import sqlite3
 import tempfile
 import unittest
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+from sqlalchemy import text
 
 from tg_migrator.state import MigrationState, Slot
 
@@ -321,6 +323,30 @@ class StateTests(unittest.TestCase):
             reset = state.queue_item(item.id)
             self.assertIsNone(reset.ai_caption)
             self.assertEqual(reset.ai_caption_status, "unchecked")
+            state.close()
+
+    def test_ai_caption_auto_claim_waits_for_cutoff_but_manual_does_not(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:92", (92,), "image", 10,
+                datetime.now(timezone.utc),
+            )
+            state.update_post_metadata(
+                item.id,
+                preview_mime="image/webp",
+                preview_data=b"preview",
+            )
+            future_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+            self.assertIsNone(state.claim_ai_caption_item(future_cutoff))
+            with state._engine.begin() as connection:
+                connection.execute(
+                    text("UPDATE automation_queue SET ai_caption_status = 'manual' WHERE id = :id"),
+                    {"id": item.id},
+                )
+            claimed = state.claim_ai_caption_item(future_cutoff)
+            self.assertIsNotNone(claimed)
+            self.assertEqual(claimed.ai_caption_status, "processing")
             state.close()
 
             heartbeat = state.touch_worker_heartbeat()

@@ -843,7 +843,7 @@ class MigrationState:
                     SET ai_caption_status = 'processing', ai_caption_error = NULL
                     WHERE id = :id
                       AND status IN ('pending', 'candidate', 'processing')
-                      AND ai_caption_status = 'unchecked'
+                      AND ai_caption_status IN ('unchecked', 'manual')
                     """
                 ),
                 {"id": item_id},
@@ -852,21 +852,30 @@ class MigrationState:
                 return None
         return self.queue_item(item_id)
 
-    def claim_ai_caption_item(self) -> QueueItem | None:
+    def claim_ai_caption_item(
+        self,
+        eligible_before: datetime | None = None,
+    ) -> QueueItem | None:
+        cutoff = (eligible_before or datetime.now(timezone.utc)).isoformat()
         with self._engine.begin() as connection:
             row = connection.execute(
                 text(
                     """
                     SELECT id FROM automation_queue
                     WHERE status IN ('pending', 'candidate')
-                      AND ai_caption_status = 'unchecked'
+                      AND (
+                        ai_caption_status = 'manual'
+                        OR (ai_caption_status = 'unchecked' AND created_at <= :cutoff)
+                      )
                       AND preview_data IS NOT NULL
                     ORDER BY
+                      CASE WHEN ai_caption_status = 'manual' THEN 0 ELSE 1 END,
                       CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
                       score DESC, published_at DESC, created_at DESC
                     LIMIT 1
                     """
-                )
+                ),
+                {"cutoff": cutoff},
             ).mappings().one_or_none()
             if row is None:
                 return None
@@ -875,7 +884,7 @@ class MigrationState:
                     """
                     UPDATE automation_queue
                     SET ai_caption_status = 'processing', ai_caption_error = NULL
-                    WHERE id = :id AND ai_caption_status = 'unchecked'
+                    WHERE id = :id AND ai_caption_status IN ('unchecked', 'manual')
                     """
                 ),
                 {"id": str(row["id"])},
@@ -1356,6 +1365,48 @@ class MigrationState:
                 {"limit": max(1, min(int(limit), 200))},
             ).mappings()
             return [self._dashboard_action(row) for row in rows]
+
+    def record_event(
+        self,
+        kind: str,
+        *,
+        queue_item_id: str | None = None,
+        result: dict[str, object] | None = None,
+        error: str | None = None,
+    ) -> DashboardAction:
+        event_id = uuid.uuid4().hex[:16]
+        now = _utcnow()
+        status = "failed" if error else "completed"
+        with self._engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO automation_actions (
+                        id, action_kind, payload, status, queue_item_id,
+                        result, error, created_at, claimed_at, completed_at
+                    ) VALUES (
+                        :id, :kind, '{}', :status, :queue_item_id,
+                        :result, :error, :created_at, :created_at, :created_at
+                    )
+                    """
+                ),
+                {
+                    "id": event_id,
+                    "kind": kind,
+                    "status": status,
+                    "queue_item_id": queue_item_id,
+                    "result": (
+                        json.dumps(result, ensure_ascii=False)
+                        if result is not None
+                        else None
+                    ),
+                    "error": error[:1000] if error else None,
+                    "created_at": now,
+                },
+            )
+        saved = self.action(event_id)
+        assert saved is not None
+        return saved
 
     def skip_item(self, item_id: str) -> bool:
         with self._engine.begin() as connection:

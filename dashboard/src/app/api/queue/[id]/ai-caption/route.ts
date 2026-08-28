@@ -16,7 +16,7 @@ export async function POST(
   const { id } = await context.params;
   const rows = await query<Row>(
     `UPDATE automation_queue
-     SET ai_caption = NULL, ai_caption_status = 'unchecked',
+     SET ai_caption = NULL, ai_caption_status = 'manual',
          ai_caption_provider = NULL, ai_caption_error = NULL,
          ai_caption_generated_at = NULL
      WHERE id = $1 AND status IN ('pending', 'candidate')
