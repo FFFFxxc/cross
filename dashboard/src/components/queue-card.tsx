@@ -76,6 +76,11 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
     onChanged();
   }
 
+  async function removeCaption() {
+    await api(`/api/queue/${item.id}/ai-caption`, { method: "DELETE" });
+    onChanged();
+  }
+
   const title = item.captionExcerpt || item.aiCaption || "Публикация без подписи";
   return (
     <article className="queue-card">
@@ -118,6 +123,9 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
               <ActionButton label="Опубликовать" pendingLabel="Ожидает бота" className="primary" onAction={publish} />
               <ActionButton label="Пропустить" pendingLabel="Пропускаю…" onAction={skip} />
               <ActionButton label={item.aiCaption ? "Сгенерировать заново" : "Сгенерировать подпись"} pendingLabel="Ставлю в очередь…" onAction={regenerateCaption} />
+              {item.aiCaption ? (
+                <ActionButton label="Убрать AI-подпись" pendingLabel="Убираю…" onAction={removeCaption} />
+              ) : null}
             </>
           ) : null}
           {item.status === "failed" || item.status === "ambiguous" ? (

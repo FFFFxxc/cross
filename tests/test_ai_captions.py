@@ -7,9 +7,11 @@ from types import SimpleNamespace
 import httpx
 
 from tg_migrator.ai_captions import (
+    AiCaptionError,
     AiCaptionClient,
     AiCaptionService,
     AiProvider,
+    _clean_generated_caption,
     decrypt_secret,
     encrypt_secret,
 )
@@ -49,6 +51,18 @@ class FakeAiClient:
 
 
 class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
+    def test_rejects_meta_answers_and_overlong_captions(self):
+        invalid = (
+            "Пришлите изображение и укажите желаемый тон",
+            "Я не могу увидеть картинку",
+            "Вот вариант подписи: обычный день героя",
+            "SKIP",
+            "Раз два три четыре пять шесть семь восемь девять десять одиннадцать двенадцать тринадцать",
+        )
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(AiCaptionError):
+                _clean_generated_caption(value, 75)
+
     def test_secret_round_trip_is_encrypted(self):
         encrypted = encrypt_secret("sk-secret", "postgresql://shared-secret")
         self.assertTrue(encrypted.startswith("enc:v1:"))
@@ -94,6 +108,38 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
             await client.aclose()
 
         self.assertEqual(caption, "Подпись к мему")
+        self.assertEqual(provider.index, 2)
+
+    async def test_client_falls_back_when_first_provider_cannot_see_image(self):
+        async def resolve(_url):
+            return None
+
+        async def handler(request: httpx.Request):
+            text = (
+                "Пришлите изображение и укажите желаемый тон"
+                if request.url.host == "first.example"
+                else "Да ну, опять он"
+            )
+            return httpx.Response(200, json={"choices": [{"message": {"content": text}}]})
+
+        client = AiCaptionClient(transport=httpx.MockTransport(handler), resolver=resolve)
+        providers = [
+            AiProvider(1, "https://first.example/v1", "key-1", "vision-one"),
+            AiProvider(2, "https://second.example/v1", "key-2", "vision-two"),
+        ]
+        try:
+            caption, provider = await client.generate_with_fallback(
+                providers,
+                image=b"webp",
+                mime_type="image/webp",
+                prompt="Придумай подпись",
+                max_chars=75,
+                context="аниме-мем",
+            )
+        finally:
+            await client.aclose()
+
+        self.assertEqual(caption, "Да ну, опять он")
         self.assertEqual(provider.index, 2)
 
     async def test_service_generates_only_when_clean_source_text_is_empty(self):
