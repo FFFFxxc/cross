@@ -295,6 +295,34 @@ class StateTests(unittest.TestCase):
             self.assertEqual(state.queue_item(candidate.id).status, "skipped")
             self.assertEqual(state.recent_actions(1)[0].id, failed.id)
 
+    def test_ai_caption_state_is_claimed_saved_and_reset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:91", (91,), "image", 10,
+                datetime.now(timezone.utc),
+            )
+            state.update_post_metadata(
+                item.id,
+                preview_mime="image/webp",
+                preview_data=b"preview",
+            )
+
+            claimed = state.claim_ai_caption_item()
+            self.assertEqual(claimed.id, item.id)
+            self.assertEqual(claimed.ai_caption_status, "processing")
+            self.assertIsNone(state.claim_ai_caption_item())
+            state.save_ai_caption(item.id, "Короткая подпись", "1:model")
+            saved = state.queue_item(item.id)
+            self.assertEqual(saved.ai_caption, "Короткая подпись")
+            self.assertEqual(saved.ai_caption_status, "generated")
+
+            self.assertTrue(state.reset_ai_caption(item.id))
+            reset = state.queue_item(item.id)
+            self.assertIsNone(reset.ai_caption)
+            self.assertEqual(reset.ai_caption_status, "unchecked")
+            state.close()
+
             heartbeat = state.touch_worker_heartbeat()
             self.assertEqual(
                 state.get_setting("worker_heartbeat_at"),

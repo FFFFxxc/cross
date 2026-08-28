@@ -20,6 +20,10 @@ export type DashboardQueueItem = {
   forwardsCount: number;
   metricsKnown: boolean;
   hasPreview: boolean;
+  aiCaption: string | null;
+  aiCaptionStatus: string;
+  aiCaptionProvider: string | null;
+  aiCaptionError: string | null;
   error: string | null;
 };
 
@@ -67,7 +71,12 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
     pollAction(result.action.id, onChanged);
   }
 
-  const title = item.captionExcerpt || "Публикация без подписи";
+  async function regenerateCaption() {
+    await api(`/api/queue/${item.id}/ai-caption`, { method: "POST" });
+    onChanged();
+  }
+
+  const title = item.captionExcerpt || item.aiCaption || "Публикация без подписи";
   return (
     <article className="queue-card">
       <div className="preview">
@@ -89,6 +98,13 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
         </div>
         <h2>{title}</h2>
         <p className="source">{item.source}</p>
+        {item.aiCaption ? (
+          <div className="ai-caption"><strong>AI-подпись</strong><p>{item.aiCaption}</p><small>{item.aiCaptionProvider}</small></div>
+        ) : item.aiCaptionStatus === "processing" ? (
+          <p className="ai-caption-status">Нейросеть готовит подпись…</p>
+        ) : item.aiCaptionError ? (
+          <p className="error">AI: {item.aiCaptionError}</p>
+        ) : null}
         <dl className="metrics">
           <div><dt>Просмотры</dt><dd>{metric(item.viewsCount, item.metricsKnown)}</dd></div>
           <div><dt>Реакции</dt><dd>{metric(item.reactionsCount, item.metricsKnown)}</dd></div>
@@ -101,6 +117,7 @@ export function QueueCard({ item, onChanged }: { item: DashboardQueueItem; onCha
             <>
               <ActionButton label="Опубликовать" pendingLabel="Ожидает бота" className="primary" onAction={publish} />
               <ActionButton label="Пропустить" pendingLabel="Пропускаю…" onAction={skip} />
+              <ActionButton label={item.aiCaption ? "Сгенерировать заново" : "Сгенерировать подпись"} pendingLabel="Ставлю в очередь…" onAction={regenerateCaption} />
             </>
           ) : null}
           {item.status === "failed" || item.status === "ambiguous" ? (

@@ -52,6 +52,11 @@ class QueueItem:
     preview_mime: str | None
     preview_data: bytes | None
     preview_checked_at: datetime | None
+    ai_caption: str | None
+    ai_caption_status: str
+    ai_caption_provider: str | None
+    ai_caption_error: str | None
+    ai_caption_generated_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -204,6 +209,11 @@ class MigrationState:
                     "preview_mime": "TEXT",
                     "preview_data": binary_type,
                     "preview_checked_at": "TEXT",
+                    "ai_caption": "TEXT",
+                    "ai_caption_status": "TEXT NOT NULL DEFAULT 'unchecked'",
+                    "ai_caption_provider": "TEXT",
+                    "ai_caption_error": "TEXT",
+                    "ai_caption_generated_at": "TEXT",
                 },
             }
             inspector = inspect(connection)
@@ -587,6 +597,27 @@ class MigrationState:
                 if row["preview_checked_at"] is not None
                 else None
             ),
+            ai_caption=(
+                str(row["ai_caption"])
+                if row["ai_caption"] is not None
+                else None
+            ),
+            ai_caption_status=str(row["ai_caption_status"]),
+            ai_caption_provider=(
+                str(row["ai_caption_provider"])
+                if row["ai_caption_provider"] is not None
+                else None
+            ),
+            ai_caption_error=(
+                str(row["ai_caption_error"])
+                if row["ai_caption_error"] is not None
+                else None
+            ),
+            ai_caption_generated_at=(
+                datetime.fromisoformat(str(row["ai_caption_generated_at"]))
+                if row["ai_caption_generated_at"] is not None
+                else None
+            ),
         )
 
     def queue_item(self, item_id: str) -> QueueItem | None:
@@ -803,6 +834,136 @@ class MigrationState:
             )
             return result.rowcount == 1
 
+    def claim_ai_caption(self, item_id: str) -> QueueItem | None:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption_status = 'processing', ai_caption_error = NULL
+                    WHERE id = :id
+                      AND status IN ('pending', 'candidate', 'processing')
+                      AND ai_caption_status = 'unchecked'
+                    """
+                ),
+                {"id": item_id},
+            )
+            if result.rowcount != 1:
+                return None
+        return self.queue_item(item_id)
+
+    def claim_ai_caption_item(self) -> QueueItem | None:
+        with self._engine.begin() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT id FROM automation_queue
+                    WHERE status IN ('pending', 'candidate')
+                      AND ai_caption_status = 'unchecked'
+                      AND preview_data IS NOT NULL
+                    ORDER BY
+                      CASE WHEN status = 'pending' THEN 0 ELSE 1 END,
+                      score DESC, published_at DESC, created_at DESC
+                    LIMIT 1
+                    """
+                )
+            ).mappings().one_or_none()
+            if row is None:
+                return None
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption_status = 'processing', ai_caption_error = NULL
+                    WHERE id = :id AND ai_caption_status = 'unchecked'
+                    """
+                ),
+                {"id": str(row["id"])},
+            )
+            if result.rowcount != 1:
+                return None
+            item_id = str(row["id"])
+        return self.queue_item(item_id)
+
+    def save_ai_caption(self, item_id: str, caption: str, provider: str) -> bool:
+        value = " ".join(caption.split()).strip()
+        if not value:
+            raise ValueError("AI-подпись не может быть пустой.")
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption = :caption,
+                        ai_caption_status = 'generated',
+                        ai_caption_provider = :provider,
+                        ai_caption_error = NULL,
+                        ai_caption_generated_at = :generated_at
+                    WHERE id = :id
+                    """
+                ),
+                {
+                    "id": item_id,
+                    "caption": value[:500],
+                    "provider": provider[:200],
+                    "generated_at": _utcnow(),
+                },
+            )
+            return result.rowcount == 1
+
+    def mark_ai_caption_not_needed(self, item_id: str, status: str = "not_needed") -> bool:
+        if status not in {"not_needed", "no_preview"}:
+            raise ValueError("Некорректный статус AI-подписи.")
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption = NULL,
+                        ai_caption_status = :status,
+                        ai_caption_provider = NULL,
+                        ai_caption_error = NULL,
+                        ai_caption_generated_at = NULL
+                    WHERE id = :id
+                    """
+                ),
+                {"id": item_id, "status": status},
+            )
+            return result.rowcount == 1
+
+    def fail_ai_caption(self, item_id: str, error: str) -> bool:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption_status = 'failed',
+                        ai_caption_error = :error
+                    WHERE id = :id
+                    """
+                ),
+                {"id": item_id, "error": error[:1000]},
+            )
+            return result.rowcount == 1
+
+    def reset_ai_caption(self, item_id: str) -> bool:
+        with self._engine.begin() as connection:
+            result = connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption = NULL,
+                        ai_caption_status = 'unchecked',
+                        ai_caption_provider = NULL,
+                        ai_caption_error = NULL,
+                        ai_caption_generated_at = NULL
+                    WHERE id = :id AND status IN ('pending', 'candidate')
+                    """
+                ),
+                {"id": item_id},
+            )
+            return result.rowcount == 1
+
     def claim_item(self, item_id: str) -> QueueItem | None:
         with self._engine.begin() as connection:
             row = connection.execute(
@@ -938,6 +1099,16 @@ class MigrationState:
 
     def recover_interrupted(self) -> None:
         with self._engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    UPDATE automation_queue
+                    SET ai_caption_status = 'unchecked',
+                        ai_caption_error = 'Генерация прервалась при перезапуске'
+                    WHERE ai_caption_status = 'processing'
+                    """
+                )
+            )
             connection.execute(
                 text(
                     """

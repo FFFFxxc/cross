@@ -17,6 +17,10 @@ type QueueRow = {
   forwards_count: number | string | null;
   metrics_known: boolean | number | string | null;
   preview_mime: string | null;
+  ai_caption: string | null;
+  ai_caption_status: string | null;
+  ai_caption_provider: string | null;
+  ai_caption_error: string | null;
   error: string | null;
   total_count: number | string;
 };
@@ -42,6 +46,10 @@ export async function GET(request: Request) {
       forwardsCount: Number(row.forwards_count || 0),
       metricsKnown: Boolean(Number(row.metrics_known || 0)),
       hasPreview: Boolean(row.preview_mime),
+      aiCaption: row.ai_caption || null,
+      aiCaptionStatus: row.ai_caption_status || "unchecked",
+      aiCaptionProvider: row.ai_caption_provider || null,
+      aiCaptionError: row.ai_caption_error || null,
       error: row.error,
     }));
     const nextOffset = filters.offset + items.length;

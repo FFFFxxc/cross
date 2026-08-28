@@ -8,6 +8,7 @@ from telethon import events
 from telethon.errors.common import InvalidBufferError
 
 from .automation import AutomationController, HELP as AUTOMATION_HELP
+from .ai_captions import AiCaptionService
 from .config import (
     STATE_FILE,
     AutomationConfig,
@@ -294,6 +295,11 @@ async def _run_automation_watcher(
             "До этого оставьте TG_AUTOMATION_ENABLED=false."
         )
     state = MigrationState(STATE_FILE, config.database_url)
+    ai_captions = AiCaptionService(
+        client,
+        state,
+        config.database_url or "desiree-local-ai",
+    )
     max_client = MaxClient(
         MaxConfig(
             token=config.max_token,
@@ -307,8 +313,15 @@ async def _run_automation_watcher(
         config.destination,
         max_client,
         default_signature=(config.signature_text, config.signature_url),
+        ai_captions=ai_captions,
     )
-    controller = AutomationController(client, state, publisher, config)
+    controller = AutomationController(
+        client,
+        state,
+        publisher,
+        config,
+        ai_captions=ai_captions,
+    )
     action_runner = DashboardActionRunner(state, controller)
     tasks: list[asyncio.Task] = []
     try:
@@ -341,6 +354,7 @@ async def _run_automation_watcher(
             asyncio.create_task(controller.refill_loop(), name="queue-refill"),
             asyncio.create_task(controller.scheduler(), name="schedule"),
             asyncio.create_task(action_runner.loop(), name="dashboard-actions"),
+            asyncio.create_task(ai_captions.loop(), name="ai-captions"),
             asyncio.create_task(
                 worker_heartbeat_loop(state),
                 name="worker-heartbeat",
@@ -357,6 +371,7 @@ async def _run_automation_watcher(
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await max_client.aclose()
+        await ai_captions.aclose()
         state.close()
 
 

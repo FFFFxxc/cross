@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Safe Telegram post migration with date/count filters and Saved Messages control"
 requires-python = ">=3.11"
 dependencies = [
+  "cryptography==46.0.2",
   "httpx==0.25.2",
   "Pillow==11.3.0",
   "psycopg[binary]==3.2.9",

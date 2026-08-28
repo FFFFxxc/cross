@@ -48,6 +48,37 @@ export const settingsInput = z.object({
   signatureUrl: httpUrl.optional(),
 }).refine((value) => Object.keys(value).length > 0, "Нет настроек для сохранения.");
 
+const httpsBaseUrl = z.string().trim().max(500).refine((value) => {
+  if (!value) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "https:" && Boolean(parsed.hostname) && !parsed.username && !parsed.password;
+  } catch {
+    return false;
+  }
+}, "Base URL должен быть публичным HTTPS-адресом.");
+
+const aiProviderInput = z.object({
+  index: z.union([z.literal(1), z.literal(2)]),
+  baseUrl: httpsBaseUrl,
+  model: z.string().trim().max(200),
+  apiKey: z.string().trim().max(1000).optional().default(""),
+  clearKey: z.boolean().optional().default(false),
+});
+
+export const aiSettingsInput = z.object({
+  enabled: z.boolean(),
+  prompt: z.string().trim().min(5).max(3000),
+  maxChars: z.number().int().min(40).max(300),
+  providers: z.array(aiProviderInput).length(2),
+}).refine(
+  (value) => new Set(value.providers.map((provider) => provider.index)).size === 2,
+  "Нужны настройки провайдеров 1 и 2.",
+).refine(
+  (value) => value.providers.every((provider) => (!provider.baseUrl && !provider.model) || (provider.baseUrl && provider.model)),
+  "Для провайдера заполните одновременно Base URL и модель.",
+);
+
 export type ActionRow = {
   id: string;
   action_kind: string;

@@ -37,6 +37,10 @@ describe("queue route", () => {
         forwards_count: null,
         metrics_known: 0,
         preview_mime: "image/webp",
+        ai_caption: "AI-подпись к мему",
+        ai_caption_status: "generated",
+        ai_caption_provider: "2:vision",
+        ai_caption_error: null,
         error: null,
         total_count: 11,
         preview_data: Buffer.from("must-not-leak"),
@@ -55,6 +59,9 @@ describe("queue route", () => {
       forwardsCount: 0,
       metricsKnown: false,
       hasPreview: true,
+      aiCaption: "AI-подпись к мему",
+      aiCaptionStatus: "generated",
+      aiCaptionProvider: "2:vision",
     });
     expect(payload.items[0]).not.toHaveProperty("preview_data");
     expect(payload.nextCursor).toBe("10");
