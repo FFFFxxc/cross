@@ -31,6 +31,13 @@ def _positive_count(payload: dict[str, object], key: str) -> int:
     return min(value, 1000)
 
 
+def _provider_index(payload: dict[str, object]) -> int:
+    value = payload.get("provider")
+    if isinstance(value, bool) or value not in {1, 2}:
+        raise ValueError("Поле provider: 1 или 2.")
+    return int(value)
+
+
 class DashboardActionRunner:
     def __init__(self, state: MigrationState, controller: Any):
         self.state = state
@@ -121,6 +128,13 @@ class DashboardActionRunner:
                 [],
             )
             return {"max_mid": str(mid)}
+
+        if action.kind == "ai_test":
+            if self.controller.ai_captions is None:
+                raise ValueError("AI-сервис не запущен.")
+            return await self.controller.ai_captions.test_provider(
+                _provider_index(payload)
+            )
 
         raise ValueError(f"Неизвестное действие: {action.kind}.")
 

@@ -75,6 +75,7 @@ export function buildQueueQuery(filters: QueueFilters): {
       SELECT id, source, post_key, message_ids, media_kind, score,
              published_at, status, caption_excerpt, views_count,
              reactions_count, forwards_count, metrics_known, preview_mime, error,
+             ai_caption, ai_caption_status, ai_caption_provider, ai_caption_error,
              COUNT(*) OVER() AS total_count
       FROM automation_queue
       WHERE ${clauses.join(" AND ")}

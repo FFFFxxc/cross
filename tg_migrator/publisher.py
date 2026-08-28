@@ -164,12 +164,14 @@ class PostPublisher:
         max_client: MaxClient,
         *,
         default_signature: tuple[str, str],
+        ai_captions=None,
     ):
         self.client = client
         self.state = state
         self.destination = destination
         self.max_client = max_client
         self.default_signature = default_signature
+        self.ai_captions = ai_captions
 
     async def _messages(self, item: QueueItem) -> list:
         values = await self.client.get_messages(
@@ -193,13 +195,17 @@ class PostPublisher:
             drop_author=True,
         )
         sent = list(forwarded) if isinstance(forwarded, (list, tuple)) else [forwarded]
-        for source_message, sent_message in zip(messages, sent):
+        source_has_text = any(_message_text(message)[0].strip() for message in messages)
+        ai_caption = item.ai_caption if not source_has_text else None
+        for index, (source_message, sent_message) in enumerate(zip(messages, sent)):
             original = (
                 getattr(source_message, "raw_text", None)
                 or getattr(source_message, "message", None)
                 or ""
             )
             cleaned, entities = _message_text(source_message)
+            if ai_caption and index == 0:
+                cleaned, entities = ai_caption, []
             has_buttons = bool(
                 getattr(source_message, "reply_markup", None)
                 or getattr(source_message, "buttons", None)
@@ -217,13 +223,16 @@ class PostPublisher:
         self.state.save_telegram_delivery(item.id, ids)
         return ids
 
-    def _max_text_chunks(self, messages: list) -> list[str]:
+    def _max_text_chunks(self, item: QueueItem, messages: list) -> list[str]:
         cleaned_text = ""
         entities: list = []
         for message in messages:
             cleaned_text, entities = _message_text(message)
             if cleaned_text:
                 break
+        if not cleaned_text and item.ai_caption:
+            cleaned_text = item.ai_caption
+            entities = []
         signature_text = self.state.get_setting(
             "signature_text",
             self.default_signature[0],
@@ -243,7 +252,7 @@ class PostPublisher:
             chunks[-1] = signature
         return chunks
 
-    async def _max_stage(self, messages: list) -> str:
+    async def _max_stage(self, item: QueueItem, messages: list) -> str:
         attachments: list[MaxAttachment] = []
         with TemporaryDirectory(prefix="desiree-max-") as directory:
             for message in messages:
@@ -256,7 +265,7 @@ class PostPublisher:
                     raise RuntimeError(f"Telegram не скачал вложение #{message.id}")
                 attachments.append(await self.max_client.upload(Path(downloaded), media_type))
             mids = []
-            for index, chunk in enumerate(self._max_text_chunks(messages)):
+            for index, chunk in enumerate(self._max_text_chunks(item, messages)):
                 mids.append(
                     await self.max_client.send(
                         chunk,
@@ -273,6 +282,8 @@ class PostPublisher:
         except Exception as exc:
             self.state.mark_error(item.id, "failed", str(exc))
             raise
+        if self.ai_captions is not None:
+            item = await self.ai_captions.ensure_caption(item, messages)
         try:
             telegram_ids = await self._telegram_stage(item, messages)
         except Exception as exc:
@@ -283,7 +294,7 @@ class PostPublisher:
             )
             raise
         try:
-            max_mid = await self._max_stage(messages)
+            max_mid = await self._max_stage(item, messages)
         except AmbiguousMaxSendError as exc:
             self.state.mark_error(item.id, "ambiguous", str(exc))
             raise

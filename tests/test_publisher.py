@@ -90,6 +90,44 @@ class PublisherFormattingTests(unittest.TestCase):
 
 
 class PublisherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_ai_caption_is_added_only_when_source_caption_is_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = MigrationState(Path(directory) / "state.sqlite3")
+            item = state.enqueue(
+                "source", "message:1", (1,), "image", 1,
+                datetime.now(timezone.utc),
+            )
+            state.save_ai_caption(item.id, "Когда сенсей снова всё понял 😄", "1:vision")
+            item = state.claim("image")
+            source = video_message()
+            source.raw_text = source.message = ""
+            source.entities = []
+            source.video = None
+            source.photo = object()
+            source.document = None
+            source.file = SimpleNamespace(ext=".jpg", size=100)
+            telegram = FakeTelegramClient({1: source})
+            max_client = FakeMaxClient()
+            publisher = PostPublisher(
+                telegram,
+                state,
+                "webnmy",
+                max_client,
+                default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+            )
+
+            await publisher.publish(item)
+
+            self.assertEqual(
+                telegram.edited[0][2]["text"],
+                "Когда сенсей снова всё понял 😄",
+            )
+            self.assertEqual(
+                max_client.sends[0][0],
+                'Когда сенсей снова всё понял 😄\n\n<a href="https://t.me/webm4ik">НАШ ТГК</a>',
+            )
+            state.close()
+
     async def test_clean_copy_is_edited_to_drop_source_buttons_too(self):
         with tempfile.TemporaryDirectory() as directory:
             state = MigrationState(Path(directory) / "state.sqlite3")

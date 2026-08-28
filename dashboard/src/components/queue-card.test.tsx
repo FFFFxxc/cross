@@ -20,6 +20,10 @@ const item = {
   forwardsCount: 55,
   metricsKnown: true,
   hasPreview: true,
+  aiCaption: null,
+  aiCaptionStatus: "not_needed",
+  aiCaptionProvider: null,
+  aiCaptionError: null,
   error: null,
 };
 
@@ -61,5 +65,27 @@ describe("QueueCard", () => {
   it("uses a placeholder when preview is absent", () => {
     render(<QueueCard item={{ ...item, hasPreview: false }} onChanged={vi.fn()} />);
     expect(screen.getByText("Видео")).toBeInTheDocument();
+  });
+
+  it("shows a generated caption in advance and can request regeneration", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ item: { id: "item-1" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    render(<QueueCard item={{
+      ...item,
+      captionExcerpt: "",
+      aiCaption: "Когда сенсей опять всё понял",
+      aiCaptionStatus: "generated",
+      aiCaptionProvider: "1:vision",
+    }} onChanged={vi.fn()} />);
+    expect(screen.getAllByText("Когда сенсей опять всё понял")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Сгенерировать заново" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/queue/item-1/ai-caption",
+      expect.objectContaining({ method: "POST" }),
+    ));
   });
 });

@@ -92,11 +92,13 @@ class AutomationController:
         state: MigrationState,
         publisher,
         config: AutomationConfig,
+        ai_captions=None,
     ):
         self.client = client
         self.state = state
         self.publisher = publisher
         self.config = config
+        self.ai_captions = ai_captions
         self.timezone = MOSCOW
         self.account_id: int | None = None
         self._chat_sources: dict[int, str] = {}

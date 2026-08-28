@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 from tg_migrator.dashboard_actions import DashboardActionRunner
 from tg_migrator.selection import MOSCOW
@@ -26,6 +27,13 @@ class FakeController:
         self.scans = []
         self.period_scans = []
         self.source_categories = []
+        self.ai_captions = SimpleNamespace(
+            test_provider=AsyncMock(return_value={
+                "provider": 2,
+                "model": "vision-two",
+                "reply": "Связь есть",
+            })
+        )
 
     async def publish_item(self, item_id):
         self.published.append(item_id)
@@ -179,6 +187,17 @@ class DashboardActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.state.sources()[0].category, "content")
         self.assertEqual(self.state.action(add.id).result["category"], "news")
         self.assertEqual(self.state.action(change.id).result["category"], "content")
+
+    async def test_ai_provider_test_runs_on_worker_without_exposing_key(self):
+        action = self.state.enqueue_action("ai_test", {"provider": 2})
+
+        self.assertTrue(await self.runner.run_once())
+
+        self.controller.ai_captions.test_provider.assert_awaited_once_with(2)
+        self.assertEqual(
+            self.state.action(action.id).result,
+            {"provider": 2, "model": "vision-two", "reply": "Связь есть"},
+        )
 
 
 if __name__ == "__main__":
