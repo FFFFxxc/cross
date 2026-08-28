@@ -44,6 +44,11 @@ _INVALID_CAPTION_PATTERNS = tuple(
         r"\bукаж(?:и|ите)\b.{0,30}\b(?:тон|стиль|пожелан)",
         r"\bя (?:подготовлю|придумаю|создам)\b.{0,40}\bподпис",
         r"\b(?:вот|готова)\b.{0,20}\b(?:вариант |ваша )?подпис",
+        r"\bподпис(?:ь|и)\b.{0,30}\b(?:писать|дать|сделать) не буду\b",
+        r"\bi (?:can(?:not|'t)|won't)\b.{0,50}\b(?:write|create|provide)\b.{0,30}\bcaption\b",
+        r"\bi(?:'ll| will) pass\b",
+        r"\b(?:send|upload|provide)\b.{0,40}\b(?:image|picture|photo)\b",
+        r"\b(?:can't|cannot|unable to)\b.{0,40}\b(?:see|view|analy[sz]e)\b",
     )
 )
 _STYLE_HINTS = (
