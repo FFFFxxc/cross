@@ -8,6 +8,11 @@ import { SettingsForm } from "./settings-form";
 afterEach(() => vi.restoreAllMocks());
 
 describe("SettingsForm", () => {
+  it("defaults news freshness to two days", () => {
+    render(<SettingsForm initial={{ fresh_days: "7", signature_url: "https://t.me/webm4ik" }} />);
+    expect(screen.getByLabelText("Свежесть новостей, дней")).toHaveValue(2);
+  });
+
   it("shows zero thresholds as disabled and saves validated values", async () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ settings: {} }), {
@@ -19,7 +24,7 @@ describe("SettingsForm", () => {
       <SettingsForm
         initial={{
           fresh_days: "7",
-          news_fresh_days: "3",
+          news_fresh_days: "2",
           min_reactions: "0",
           min_views: "0",
           signature_text: "НАШ ТГК",
@@ -34,7 +39,7 @@ describe("SettingsForm", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       minReactions: 150,
       freshDays: 7,
-      newsFreshDays: 3,
+      newsFreshDays: 2,
     });
   });
 

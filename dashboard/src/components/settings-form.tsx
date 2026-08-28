@@ -11,7 +11,7 @@ type Settings = Partial<Record<
 
 export function SettingsForm({ initial }: { initial: Settings }) {
   const [freshDays, setFreshDays] = useState(initial.fresh_days || "7");
-  const [newsFreshDays, setNewsFreshDays] = useState(initial.news_fresh_days || "3");
+  const [newsFreshDays, setNewsFreshDays] = useState(initial.news_fresh_days || "2");
   const [minReactions, setMinReactions] = useState(initial.min_reactions || "0");
   const [minViews, setMinViews] = useState(initial.min_views || "0");
   const [signatureText, setSignatureText] = useState(initial.signature_text || "НАШ ТГК");

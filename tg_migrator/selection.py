@@ -26,6 +26,7 @@ _PROMO_RE = re.compile(
     r"подпис(?:аться|ывай(?:ся)?|ка)"
     r")"
 )
+_ADVERTISING_MARKER_RE = re.compile(r"\bреклама\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,21 @@ class Post:
             if text:
                 return text.replace("\n", " ")[:80]
         return "[медиа без подписи]"
+
+
+def text_has_advertising_marker(text: str | None) -> bool:
+    """Match the standalone disclosure word without rejecting 'рекламная'."""
+    return bool(_ADVERTISING_MARKER_RE.search(text or ""))
+
+
+def post_has_advertising_marker(post: Post) -> bool:
+    return any(
+        text_has_advertising_marker(
+            getattr(message, "raw_text", None)
+            or getattr(message, "message", None)
+        )
+        for message in post.messages
+    )
 
 
 def parse_start_date(value: str) -> datetime:

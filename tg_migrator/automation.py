@@ -19,9 +19,11 @@ from .selection import (
     parse_start_date,
     post_from_messages,
     post_fingerprint,
+    post_has_advertising_marker,
     post_media_kind,
     post_smart_score,
     posts_from_date,
+    text_has_advertising_marker,
 )
 from .state import MigrationState, QueueItem, Slot
 
@@ -111,10 +113,10 @@ class AutomationController:
         try:
             return min(
                 7,
-                max(1, int(self.state.get_setting("news_fresh_days", "3") or 3)),
+                max(1, int(self.state.get_setting("news_fresh_days", "2") or 2)),
             )
         except (TypeError, ValueError):
-            return 3
+            return 2
 
     def _news_fresh_cutoff(self) -> datetime:
         return datetime.now(timezone.utc) - timedelta(days=self._news_fresh_days())
@@ -130,6 +132,7 @@ class AutomationController:
     async def initialize(self) -> None:
         self.account_id = int((await self.client.get_me()).id)
         self.state.recover_interrupted()
+        self._skip_existing_advertising_items()
         if not self.state.sources():
             await self.add_source(str(self.config.initial_source))
         else:
@@ -149,6 +152,16 @@ class AutomationController:
             self.state.set_setting("signature_text", self.config.signature_text)
         if self.state.get_setting("signature_url") is None:
             self.state.set_setting("signature_url", self.config.signature_url)
+
+    def _skip_existing_advertising_items(self) -> int:
+        skipped = 0
+        for item in self.state.pool_items(limit=10_000):
+            if (
+                text_has_advertising_marker(item.caption_excerpt)
+                and self.state.skip_item(item.id)
+            ):
+                skipped += 1
+        return skipped
 
     async def _entity_from_dialogs(self, peer: str):
         """Restore private-channel entities that a StringSession does not cache."""
@@ -283,6 +296,8 @@ class AutomationController:
         for post in posts:
             if self._cancel.is_set():
                 break
+            if post_has_advertising_marker(post):
+                continue
             item = self.state.enqueue(
                 source,
                 post.key,
