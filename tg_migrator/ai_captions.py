@@ -8,6 +8,7 @@ import os
 import re
 import socket
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from urllib.parse import unquote, urlparse
 
 import httpx
@@ -62,6 +63,24 @@ _STYLE_HINTS = (
 
 class AiCaptionError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class AiProviderFailure:
+    provider: "AiProvider"
+    error: str
+
+
+class AiCaptionGenerationError(AiCaptionError):
+    def __init__(self, failures: list[AiProviderFailure]):
+        self.failures = tuple(failures)
+        super().__init__(
+            "; ".join(
+                f"провайдер {failure.provider.index}: {failure.error}"
+                for failure in failures
+            )[:1000]
+            or "Нет доступных AI-провайдеров."
+        )
 
 
 @dataclass(frozen=True)
@@ -254,7 +273,7 @@ class AiCaptionClient:
         prompt: str,
         max_chars: int,
         context: str,
-    ) -> tuple[str, AiProvider]:
+    ) -> tuple[str, AiProvider, tuple[AiProviderFailure, ...]]:
         encoded = base64.b64encode(image).decode("ascii")
         messages = [
             {"role": "system", "content": prompt},
@@ -278,14 +297,18 @@ class AiCaptionClient:
                 ],
             },
         ]
-        errors: list[str] = []
+        failures: list[AiProviderFailure] = []
         for provider in providers:
             try:
                 raw = await self._complete(provider, messages, 120)
-                return _clean_generated_caption(raw, max_chars), provider
+                return (
+                    _clean_generated_caption(raw, max_chars),
+                    provider,
+                    tuple(failures),
+                )
             except Exception as exc:
-                errors.append(f"провайдер {provider.index}: {exc}")
-        raise AiCaptionError("; ".join(errors)[:1000] or "Нет настроенных AI-провайдеров.")
+                failures.append(AiProviderFailure(provider, str(exc)))
+        raise AiCaptionGenerationError(failures)
 
 
 def cleaned_source_text(messages) -> str:
@@ -313,6 +336,7 @@ class AiCaptionService:
         self.state = state
         self.credential_secret = credential_secret or "desiree-local-ai"
         self.client = client or AiCaptionClient()
+        self._generation_lock = asyncio.Lock()
 
     def enabled(self) -> bool:
         return (self.state.get_setting("ai_enabled", "false") or "false").lower() == "true"
@@ -325,6 +349,30 @@ class AiCaptionService:
             return min(300, max(40, int(self.state.get_setting("ai_max_chars", "75") or 75)))
         except (TypeError, ValueError):
             return 75
+
+    def auto_delay_seconds(self) -> int:
+        try:
+            return min(
+                3600,
+                max(
+                    30,
+                    int(self.state.get_setting("ai_auto_delay_seconds", "90") or 90),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 90
+
+    def interval_seconds(self) -> int:
+        try:
+            return min(
+                600,
+                max(
+                    10,
+                    int(self.state.get_setting("ai_interval_seconds", "20") or 20),
+                ),
+            )
+        except (TypeError, ValueError):
+            return 20
 
     def providers(self) -> list[AiProvider]:
         providers: list[AiProvider] = []
@@ -343,6 +391,73 @@ class AiCaptionService:
                 )
             )
         return providers
+
+    def _cooldown_until(self, provider: AiProvider) -> datetime | None:
+        raw = self.state.get_setting(
+            f"ai_provider_{provider.index}_cooldown_until",
+            "",
+        )
+        if not raw:
+            return None
+        try:
+            value = datetime.fromisoformat(raw)
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    def _ordered_available_providers(self) -> list[AiProvider]:
+        now = datetime.now(timezone.utc)
+        available = [
+            provider
+            for provider in self.providers()
+            if (self._cooldown_until(provider) or now) <= now
+        ]
+        if not available:
+            return []
+        try:
+            preferred = int(
+                self.state.get_setting("ai_next_provider_index", "1") or 1
+            )
+        except (TypeError, ValueError):
+            preferred = 1
+        return sorted(
+            available,
+            key=lambda provider: (provider.index != preferred, provider.index),
+        )
+
+    def _mark_provider_failed(
+        self,
+        failure: AiProviderFailure,
+        item: QueueItem | None,
+    ) -> None:
+        seconds = 1800 if re.search(r"HTTP (?:401|403|429)\b", failure.error) else 300
+        cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+        self.state.set_setting(
+            f"ai_provider_{failure.provider.index}_cooldown_until",
+            cooldown_until.isoformat(),
+        )
+        self.state.record_event(
+            "ai_provider_error",
+            queue_item_id=item.id if item else None,
+            result={
+                "provider": failure.provider.index,
+                "model": failure.provider.model,
+                "cooldownUntil": cooldown_until.isoformat(),
+            },
+            error=failure.error,
+        )
+
+    def _mark_provider_succeeded(self, provider: AiProvider) -> None:
+        self.state.set_setting(
+            f"ai_provider_{provider.index}_cooldown_until",
+            "",
+        )
+        configured = self.providers()
+        other = next(
+            (value for value in configured if value.index != provider.index),
+            provider,
+        )
+        self.state.set_setting("ai_next_provider_index", str(other.index))
 
     async def _messages(self, item: QueueItem):
         values = await self.telegram_client.get_messages(
@@ -393,26 +508,62 @@ class AiCaptionService:
             if not preview_data or not preview_mime:
                 self.state.mark_ai_caption_not_needed(item.id, "no_preview")
                 return self.state.queue_item(item.id) or item
-            providers = self.providers()
-            if not providers:
-                raise AiCaptionError("Не настроен ни один AI-провайдер.")
-            caption, provider = await self.client.generate_with_fallback(
-                providers,
-                image=preview_data,
-                mime_type=preview_mime,
-                prompt=self.prompt(),
-                max_chars=self.max_chars(),
-                context=f"{item.content_category}, {item.media_kind}",
-            )
+            async with self._generation_lock:
+                providers = self._ordered_available_providers()
+                if not providers:
+                    raise AiCaptionError(
+                        "Все AI-провайдеры временно на паузе после ошибок."
+                    )
+                caption, provider, failures = await self.client.generate_with_fallback(
+                    providers,
+                    image=preview_data,
+                    mime_type=preview_mime,
+                    prompt=self.prompt(),
+                    max_chars=self.max_chars(),
+                    context=f"{item.content_category}, {item.media_kind}",
+                )
+            for failure in failures:
+                self._mark_provider_failed(failure, item)
+            self._mark_provider_succeeded(provider)
             self.state.save_ai_caption(item.id, caption, provider.label)
+            self.state.record_event(
+                "ai_caption_generated",
+                queue_item_id=item.id,
+                result={
+                    "provider": provider.index,
+                    "model": provider.model,
+                    "source": item.source,
+                    "fallbacks": len(failures),
+                },
+            )
+        except AiCaptionGenerationError as exc:
+            for failure in exc.failures:
+                self._mark_provider_failed(failure, item)
+            error = f"{exc.__class__.__name__}: {exc}"
+            self.state.fail_ai_caption(item.id, error)
+            self.state.record_event(
+                "ai_caption_failed",
+                queue_item_id=item.id,
+                result={"source": item.source},
+                error=error,
+            )
         except Exception as exc:
-            self.state.fail_ai_caption(item.id, f"{exc.__class__.__name__}: {exc}")
+            error = f"{exc.__class__.__name__}: {exc}"
+            self.state.fail_ai_caption(item.id, error)
+            self.state.record_event(
+                "ai_caption_failed",
+                queue_item_id=item.id,
+                result={"source": item.source},
+                error=error,
+            )
         return self.state.queue_item(item.id) or item
 
     async def run_once(self) -> bool:
-        if not self.enabled() or not self.providers():
+        if not self.enabled() or not self._ordered_available_providers():
             return False
-        item = self.state.claim_ai_caption_item()
+        item = self.state.claim_ai_caption_item(
+            datetime.now(timezone.utc) - timedelta(seconds=self.auto_delay_seconds())
+        )
         if item is None:
             return False
         await self.ensure_caption(item, already_claimed=True)
@@ -424,13 +575,19 @@ class AiCaptionService:
                 processed = await self.run_once()
             except Exception:
                 processed = False
-            await sleep(1 if processed else 10)
+            await sleep(self.interval_seconds() if processed else 10)
 
     async def test_provider(self, index: int) -> dict[str, object]:
         provider = next((value for value in self.providers() if value.index == index), None)
         if provider is None:
             raise AiCaptionError(f"AI-провайдер {index} настроен не полностью.")
-        reply = await self.client.test(provider)
+        try:
+            async with self._generation_lock:
+                reply = await self.client.test(provider)
+        except Exception as exc:
+            self._mark_provider_failed(AiProviderFailure(provider, str(exc)), None)
+            raise
+        self._mark_provider_succeeded(provider)
         return {"provider": index, "model": provider.model, "reply": reply}
 
     async def aclose(self) -> None:

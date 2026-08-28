@@ -41,7 +41,7 @@ class FakeAiClient:
 
     async def generate_with_fallback(self, providers, **kwargs):
         self.calls.append((providers, kwargs))
-        return "Вот это поворот даже для сенсея 😄", providers[-1]
+        return "Вот это поворот даже для сенсея 😄", providers[-1], ()
 
     async def test(self, provider):
         return f"Связь с {provider.model} есть"
@@ -99,7 +99,7 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
             AiProvider(2, "https://second.example/v1", "key-2", "vision-two"),
         ]
         try:
-            caption, provider = await client.generate_with_fallback(
+            caption, provider, failures = await client.generate_with_fallback(
                 providers,
                 image=b"webp",
                 mime_type="image/webp",
@@ -112,6 +112,7 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(caption, "Подпись к мему")
         self.assertEqual(provider.index, 2)
+        self.assertEqual(len(failures), 1)
 
     async def test_client_falls_back_when_first_provider_cannot_see_image(self):
         async def resolve(_url):
@@ -131,7 +132,7 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
             AiProvider(2, "https://second.example/v1", "key-2", "vision-two"),
         ]
         try:
-            caption, provider = await client.generate_with_fallback(
+            caption, provider, _failures = await client.generate_with_fallback(
                 providers,
                 image=b"webp",
                 mime_type="image/webp",
@@ -179,6 +180,8 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(generated.ai_caption_status, "generated")
             self.assertEqual(generated.ai_caption_provider, "2:vision-two")
             self.assertEqual(len(fake_ai.calls), 1)
+            self.assertEqual(state.get_setting("ai_next_provider_index"), "1")
+            self.assertEqual(state.recent_actions(1)[0].kind, "ai_caption_generated")
             state.close()
 
     async def test_service_does_not_replace_real_source_caption(self):

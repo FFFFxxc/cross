@@ -8,7 +8,7 @@ import { getEnv } from "@/lib/env";
 export const DEFAULT_AI_PROMPT = "Ты ведёшь небольшой живой аниме-мем паблик. Посмотри именно на прикреплённую картинку и напиши реакцию как обычный человек в чате: 3–9 слов, максимум одно короткое предложение. Подойдут простая шутка, узнаваемая эмоция или разговорная реплика по тому, что реально видно. Пиши разнообразно; иногда достаточно 1–3 слов или одного уместного эмодзи. Не объясняй мем, не пересказывай картинку, не используй канцелярит и шаблоны «когда…», «тот самый момент…», «вот это…», «логика…». Не называй персонажей и аниме, если не уверен. Без ссылок, хэштегов, рекламы, призывов, кавычек и упоминаний ИИ. Если картинка недоступна, непонятна или заблокирована, ответь строго SKIP. Верни только готовую подпись или SKIP.";
 
 const KEYS = [
-  "ai_enabled", "ai_prompt", "ai_max_chars",
+  "ai_enabled", "ai_prompt", "ai_max_chars", "ai_auto_delay_seconds", "ai_interval_seconds",
   "ai_provider_1_base_url", "ai_provider_1_model", "ai_provider_1_api_key",
   "ai_provider_2_base_url", "ai_provider_2_model", "ai_provider_2_api_key",
 ] as const;
@@ -21,6 +21,8 @@ function safeSettings(rows: SettingRow[]) {
     enabled: values.ai_enabled === "true",
     prompt: values.ai_prompt || DEFAULT_AI_PROMPT,
     maxChars: Number(values.ai_max_chars || 75),
+    autoDelaySeconds: Number(values.ai_auto_delay_seconds || 90),
+    intervalSeconds: Number(values.ai_interval_seconds || 20),
     providers: ([1, 2] as const).map((index) => ({
       index,
       baseUrl: values[`ai_provider_${index}_base_url`] || "",
@@ -53,6 +55,8 @@ export async function PUT(request: Request) {
       ["ai_enabled", String(parsed.enabled)],
       ["ai_prompt", parsed.prompt],
       ["ai_max_chars", String(parsed.maxChars)],
+      ["ai_auto_delay_seconds", String(parsed.autoDelaySeconds)],
+      ["ai_interval_seconds", String(parsed.intervalSeconds)],
     ];
     for (const provider of parsed.providers) {
       entries.push(

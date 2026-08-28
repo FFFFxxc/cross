@@ -70,6 +70,8 @@ export const aiSettingsInput = z.object({
   enabled: z.boolean(),
   prompt: z.string().trim().min(5).max(3000),
   maxChars: z.number().int().min(40).max(300),
+  autoDelaySeconds: z.number().int().min(30).max(3600).default(90),
+  intervalSeconds: z.number().int().min(10).max(600).default(20),
   providers: z.array(aiProviderInput).length(2),
 }).refine(
   (value) => new Set(value.providers.map((provider) => provider.index)).size === 2,

@@ -8,6 +8,8 @@ export type AiSettingsView = {
   enabled: boolean;
   prompt: string;
   maxChars: number;
+  autoDelaySeconds: number;
+  intervalSeconds: number;
   providers: Array<{
     index: 1 | 2;
     baseUrl: string;
@@ -22,6 +24,8 @@ export function AiSettingsForm({ initial }: { initial: AiSettingsView }) {
   const [enabled, setEnabled] = useState(initial.enabled);
   const [prompt, setPrompt] = useState(initial.prompt);
   const [maxChars, setMaxChars] = useState(String(initial.maxChars));
+  const [autoDelaySeconds, setAutoDelaySeconds] = useState(String(initial.autoDelaySeconds));
+  const [intervalSeconds, setIntervalSeconds] = useState(String(initial.intervalSeconds));
   const [providers, setProviders] = useState<ProviderState[]>(
     initial.providers.map((provider) => ({ ...provider, apiKey: "" })),
   );
@@ -44,6 +48,8 @@ export function AiSettingsForm({ initial }: { initial: AiSettingsView }) {
         enabled,
         prompt,
         maxChars: Number(maxChars),
+        autoDelaySeconds: Number(autoDelaySeconds),
+        intervalSeconds: Number(intervalSeconds),
         providers: providers.map(({ index, baseUrl, model, apiKey }) => ({
           index, baseUrl, model, apiKey,
         })),
@@ -118,6 +124,8 @@ export function AiSettingsForm({ initial }: { initial: AiSettingsView }) {
       </div>
       <div className="form-grid ai-prompt-grid">
         <label>Максимум символов<input aria-label="Максимум символов AI-подписи" type="number" min="40" max="300" value={maxChars} onChange={(event) => setMaxChars(event.target.value)} /></label>
+        <label>Задержка после добавления (сек)<input aria-label="Задержка AI" type="number" min="30" max="3600" value={autoDelaySeconds} onChange={(event) => setAutoDelaySeconds(event.target.value)} /></label>
+        <label>Пауза между генерациями (сек)<input aria-label="Пауза AI" type="number" min="10" max="600" value={intervalSeconds} onChange={(event) => setIntervalSeconds(event.target.value)} /></label>
         <label className="wide">Техническое задание<textarea aria-label="Техническое задание для нейросети" rows={7} value={prompt} onChange={(event) => setPrompt(event.target.value)} /></label>
       </div>
       <div className="actions"><button className="primary" type="submit" disabled={pending}>{pending ? "Сохраняю…" : "Сохранить AI-настройки"}</button></div>
