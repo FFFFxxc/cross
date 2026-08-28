@@ -564,7 +564,7 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(added, 1)
         self.assertEqual(self.state.claim().message_ids, (2,))
 
-    async def test_news_parse_uses_only_news_sources_and_three_day_window(self):
+    async def test_news_parse_uses_only_news_sources_and_two_day_window(self):
         now = datetime.now(timezone.utc)
         self.state.add_source("anime-news", "Anime News", "news")
         client = FakeClient(
@@ -572,7 +572,7 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
                 "animeworldmem": [message(1, views=99_000, published_at=now)],
                 "anime-news": [
                     message(3, published_at=now - timedelta(hours=2)),
-                    message(2, views=50_000, published_at=now - timedelta(days=4)),
+                    message(2, views=50_000, published_at=now - timedelta(hours=49)),
                 ],
             }
         )
@@ -586,6 +586,47 @@ class AutomationTests(unittest.IsolatedAsyncioTestCase):
             ("anime-news", (3,)),
         ])
         self.assertEqual(self.state.pool_items(content_category="content"), [])
+
+    async def test_parse_rejects_advertising_marker_before_queue(self):
+        now = datetime.now(timezone.utc)
+        client = FakeClient(
+            {
+                "animeworldmem": [
+                    message(2, published_at=now),
+                    message(1, published_at=now),
+                ]
+            }
+        )
+        client.posts["animeworldmem"][0].raw_text = "Реклама. ООО Партнёр"
+        client.posts["animeworldmem"][0].message = "Реклама. ООО Партнёр"
+        client.posts["animeworldmem"][1].raw_text = "Рекламная иллюстрация аниме"
+        client.posts["animeworldmem"][1].message = "Рекламная иллюстрация аниме"
+        controller, _ = await self.controller(client)
+
+        added = await controller.parse_latest(10)
+
+        self.assertEqual(added, 1)
+        self.assertEqual(self.state.pool_items()[0].message_ids, (1,))
+
+    async def test_initialize_skips_existing_advertising_candidates(self):
+        item = self.state.enqueue(
+            "animeworldmem",
+            "message:9",
+            (9,),
+            "image",
+            10,
+            datetime.now(timezone.utc),
+            status="candidate",
+        )
+        self.state.update_post_metadata(
+            item.id,
+            caption_excerpt="Полезный сервис. #реклама",
+        )
+
+        controller, _ = await self.controller()
+
+        self.assertEqual(controller._news_fresh_days(), 2)
+        self.assertEqual(self.state.queue_item(item.id).status, "skipped")
 
     async def test_news_publish_prefers_newest_and_ignores_thresholds(self):
         now = datetime.now(timezone.utc)

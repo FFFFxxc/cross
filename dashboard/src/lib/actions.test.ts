@@ -46,7 +46,7 @@ describe("dashboard mutations", () => {
     expect(
       settingsInput.parse({
         freshDays: 7,
-        newsFreshDays: 3,
+        newsFreshDays: 2,
         minReactions: 0,
         minViews: 5000,
         signatureText: "НАШ ТГК",

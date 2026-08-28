@@ -10,6 +10,7 @@ from tg_migrator.selection import (
     post_activity,
     post_fingerprint,
     post_from_messages,
+    post_has_advertising_marker,
     post_media_kind,
     post_smart_score,
     posts_from_date,
@@ -54,6 +55,22 @@ async def iterator(items):
 
 
 class SelectionTests(unittest.IsolatedAsyncioTestCase):
+    def test_advertising_marker_matches_exact_word_but_not_anime_art_term(self):
+        ads = Post(
+            "album:1",
+            (
+                message(1, 1, text="Обычная подпись", grouped_id=1),
+                message(2, 1, text="#РЕКЛАМА. ООО Издатель", grouped_id=1),
+            ),
+        )
+        anime_art = Post(
+            "message:3",
+            (message(3, 1, text="Рекламная иллюстрация нового аниме"),),
+        )
+
+        self.assertTrue(post_has_advertising_marker(ads))
+        self.assertFalse(post_has_advertising_marker(anime_art))
+
     def test_post_metrics_sum_album_counters_and_caption_is_bounded(self):
         first = message(
             1,
