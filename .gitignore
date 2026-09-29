@@ -12,3 +12,7 @@ dashboard/.next/
 dashboard/tsconfig.tsbuildinfo
 dashboard/test-results/
 dashboard/playwright-report/
+.env
+.env.bak
+.env.save
+.env.save.*
