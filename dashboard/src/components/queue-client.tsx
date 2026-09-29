@@ -43,7 +43,7 @@ export function QueueClient({ initialSearch = "" }: { initialSearch?: string }) 
   function change(name: string, value: string) {
     const next = new URLSearchParams(search);
     if (value) next.set(name, value); else next.delete(name);
-    next.delete("cursor");
+    if (name !== "cursor") next.delete("cursor");
     const serialized = next.toString();
     setLoading(true);
     setError("");
