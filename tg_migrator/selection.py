@@ -28,6 +28,23 @@ _PROMO_RE = re.compile(
 )
 _ADVERTISING_MARKER_RE = re.compile(r"\bреклама\b", re.IGNORECASE)
 
+_EXTERNAL_PROMO_RE = re.compile(
+    r"(?i)(?:"
+    r"предложк\w*|"
+    r"донат\w*|donate|"
+    r"просьб\w*\s+протык\w*|"
+    r"тык(?:ай|айте|нуть)\w*|"
+    r"подпис(?:аться|ывай\w*|ка)|"
+    r"по\s+вопросам\s+реклам\w*|"
+    r"(?:купить|заказать)\s+реклам\w*|"
+    r"промокод\w*|"
+    r"поддержать\s+(?:канал|проект)"
+    r")"
+)
+
+# Свою рекламную вставку сохраняем вместе со скрытой Telegram-ссылкой.
+_ALLOWED_LINK_ANCHOR_RE = re.compile(r"(?i)\bлучший\s+vpn\b")
+
 
 @dataclass(frozen=True)
 class Post:
@@ -52,8 +69,19 @@ class Post:
 
 
 def text_has_advertising_marker(text: str | None) -> bool:
-    """Match the standalone disclosure word without rejecting 'рекламная'."""
-    return bool(_ADVERTISING_MARKER_RE.search(text or ""))
+    """Reject explicit ads and obvious external self-promotion."""
+    value = text or ""
+
+    # Явная маркировка рекламы.
+    if _ADVERTISING_MARKER_RE.search(value):
+        return True
+
+    # Самопромо от чужих каналов отбрасываем только когда есть
+    # видимая внешняя ссылка + характерный рекламный призыв.
+    if _VISIBLE_LINK_RE.search(value) and _EXTERNAL_PROMO_RE.search(value):
+        return True
+
+    return False
 
 
 def post_has_advertising_marker(post: Post) -> bool:
@@ -138,6 +166,13 @@ def _removal_spans(text: str, entities: list[Any] | None) -> list[tuple[int, int
         end_u16 = start_u16 + int(getattr(entity, "length", 0))
         start = _index_from_utf16(text, start_u16)
         end = _index_from_utf16(text, end_u16)
+
+        # "ЛУЧШИЙ VPN" — наша разрешённая рекламная ссылка.
+        # Не удаляем ни текст, ни встроенный URL entity.
+        visible_text = text[start:end]
+        if _ALLOWED_LINK_ANCHOR_RE.search(visible_text):
+            continue
+
         spans.append(_line_span(text, start, end))
 
     for match in _PROMO_RE.finditer(text):
