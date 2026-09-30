@@ -10,6 +10,7 @@ dependencies = [
   "psycopg[binary]==3.2.9",
   "SQLAlchemy==2.0.43",
   "Telethon==1.44.0",
+  "python-socks[asyncio]>=2.5,<3",
 ]
 
 [project.scripts]
