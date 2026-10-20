@@ -1,0 +1,80 @@
+REPOSITORY=https://github.com/FFFFxxc/cross
+BRANCH=fix/nosok-vpn-link
+BASE=e4b53a9982d1e0c1781bf265ce8a0960cc9dd3b2
+CHANGED_FIELD=selection.ALLOWED_SOURCE_LINK_URL and publisher.telegram_entities_to_max_html
+ALLOWED_SOURCE_LINK_URL=https://t.me/NosokVPNBot?start=partner_8235497168
+ROOT_CAUSE=label-only whitelist allowed arbitrary targets, while MAX formatter discarded every text-URL entity
+FIX=shared full-URL comparison and escaped MAX anchor rendering; channel signature and other filtering preserved
+STATUS=verified code; VK Cloud deployment not verified
+MODIFIED_FILE=C:\BOTS\CROSS\cross\tg_migrator\publisher.py
+DIFF_FILE=C:\BOTS\CROSS\cross\artifacts\vpn-link\DIFF.patch
+VERIFICATION_FILE=C:\BOTS\CROSS\cross\artifacts\vpn-link\VERIFICATION.txt
+ROLLBACK_FILE=C:\BOTS\CROSS\cross\artifacts\vpn-link\ROLLBACK.sh
+SUPPORTING_MODIFIED_FILE=C:\BOTS\CROSS\cross\tg_migrator\selection.py
+
+BASELINE_COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -m pytest tests -q --tb=short
+BASELINE_INPUT=original e4b53a9 source and tests
+BASELINE_LITERAL_RESULT=7 failed, 121 passed in 35.54s
+BASELINE_EXIT_STATUS=1
+
+MODIFIED_COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -m pytest tests -q --tb=short
+MODIFIED_INPUT=exact URL fix and 8 new regression tests
+MODIFIED_LITERAL_RESULT=7 failed, 129 passed in 30.75s
+MODIFIED_EXIT_STATUS=1
+FAILURE_SET=identical before/after; 3 date-sensitive queue tests and 4 SQLite cleanup failures on Windows
+tests/test_automation.py::AutomationTests::test_parse_fills_queue_without_duplicates
+tests/test_automation.py::AutomationTests::test_refill_scans_past_already_published_latest_posts
+tests/test_automation.py::AutomationTests::test_refill_stops_at_queue_minimum
+tests/test_publisher.py::PublisherTests::test_long_text_is_split_without_losing_content
+tests/test_publisher.py::PublisherTests::test_webpage_preview_is_not_uploaded_as_a_file
+tests/test_state.py::StateTests::test_additive_schema_preserves_legacy_rows_and_stores_dashboard_metadata
+tests/test_state.py::StateTests::test_dashboard_action_failure_skip_and_heartbeat_are_guarded
+
+REGRESSION_COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -m pytest tests/test_selection.py tests/test_publisher.py -k vpn -q --tb=short
+REGRESSION_INPUT=approved hidden target, spoofed label/URL variants, UTF16 offsets, HTML escaping, nested bold, chunks, and publisher Telegram/MAX flow
+REGRESSION_LITERAL_RESULT=8 passed, 30 deselected in 1.37s
+REGRESSION_EXIT_STATUS=0
+COMPILE_COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -m compileall -q tg_migrator tests
+COMPILE_OUTPUT=<empty>
+COMPILE_EXIT_STATUS=0
+
+COMMAND="C:\Program Files\Git\bin\bash.exe" artifacts/vpn-link/ROLLBACK.sh
+INPUT=separate clone with DIFF.patch applied
+ROLLBACK_RESULT=restored original selection, publisher, tests and README
+EXIT_STATUS=0
+ORIGINAL_HASHES_RESTORED=all five changed files
+DIFF_EMPTY=yes
+TEST_COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -m pytest tests/test_selection.py tests/test_publisher.py::PublisherFormattingTests -q --tb=short
+......................                                                   [100%]
+22 passed in 1.13s
+TEST_EXIT_STATUS=0
+
+MODIFIED COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -c "from telethon.tl.types import MessageEntityTextUrl; from tg_migrator.selection import sanitize_message_text; from tg_migrator.publisher import telegram_entities_to_max_html; u=\"https://t.me/NosokVPNBot?start=partner_8235497168\"; t,e=sanitize_message_text(\"Лучший VPN\",[MessageEntityTextUrl(0,10,u)]); print(\"RESULT=\"+repr(telegram_entities_to_max_html(t,e)))"
+RESULT='<a href="https://t.me/NosokVPNBot?start=partner_8235497168">Лучший VPN</a>'
+EXIT_STATUS=0
+
+RESTORED COMMAND=C:\BOTS\CROSS\cross\.venv\Scripts\python.exe -X utf8 -c "from telethon.tl.types import MessageEntityTextUrl; from tg_migrator.selection import sanitize_message_text; from tg_migrator.publisher import telegram_entities_to_max_html; u=\"https://t.me/NosokVPNBot?start=partner_8235497168\"; t,e=sanitize_message_text(\"Лучший VPN\",[MessageEntityTextUrl(0,10,u)]); print(\"RESULT=\"+repr(telegram_entities_to_max_html(t,e)))"
+RESULT='Лучший VPN'
+EXIT_STATUS=0
+
+HASHES:
+{
+  "base": "e4b53a9982d1e0c1781bf265ce8a0960cc9dd3b2",
+  "original": {
+    "tg_migrator/selection.py": "fdc9bc664cd4c7cf24e76f32a4a5b5581fbe8a9cb22beb51ca5e62330adfbe5d",
+    "tg_migrator/publisher.py": "42079a17970113d9ee84bbe13f3ced78167588b99b0a88a07ee05275098e42bf",
+    "tests/test_selection.py": "d7ebd83117a98efbe3c1b3bd55770261b77d516f6e313579a505dc2f1ac2b49c",
+    "tests/test_publisher.py": "6819fdd4ad10e8f38007938e6c07e77cf2937d0c178ea698eb4b87a4a7f51ea0",
+    "README.md": "84085e8255bc156e141b8ea3a01f180fd102bf4ee8dba5d3d023f5590ccefdd6"
+  },
+  "modified": {
+    "tg_migrator/selection.py": "0205bb93d2d0cf0276049d5551a83e6ccf63b2574036c8bf399a05b4f0ba2ff5",
+    "tg_migrator/publisher.py": "905b07063c1f10a19cd79767e68f9bb67cf678aee5996b7d374a7d1b2f7513b1",
+    "tests/test_selection.py": "a3a5eb82be2bb26460201dcfc0b3421d0b54c255cb5cf0f209a014c01fb67dd6",
+    "tests/test_publisher.py": "d231525b9263b6f69f317234f61dbb1337f5d7c110448b180bff816f4010ef98",
+    "README.md": "aeb13e089feb2497d7f5d8fddbe127c5e404a6e59672238865e063412b61cef9"
+  }
+}
+
+RESTORED_STATUS=all 5 original hashes match, tracked source diff empty, 22 original sanitizer/formatter tests pass, original plain VPN text restored
+MODIFIED_FILE_LEFT_CHANGED=yes

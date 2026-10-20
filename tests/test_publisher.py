@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
-from telethon.tl.types import MessageEntityBold, MessageEntityItalic
+from telethon.tl.types import MessageEntityBold, MessageEntityItalic, MessageEntityTextUrl
 
 from tg_migrator.max_client import AmbiguousMaxSendError, MaxAttachment
 from tg_migrator.publisher import PostPublisher, _split_text, telegram_entities_to_max_html
@@ -69,6 +69,53 @@ def video_message(message_id=1):
 
 
 class PublisherFormattingTests(unittest.TestCase):
+    def test_renders_exact_vpn_link_as_clickable_max_html(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        text = "😀 Лучший VPN"
+        link = MessageEntityTextUrl(offset=3, length=10, url=url)
+
+        rendered = telegram_entities_to_max_html(text, [link])
+
+        self.assertEqual(rendered, f'😀 <a href="{url}">Лучший VPN</a>')
+
+    def test_vpn_link_and_bold_have_valid_nesting_in_both_entity_orders(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        link = MessageEntityTextUrl(offset=0, length=10, url=url)
+        bold = MessageEntityBold(offset=0, length=10)
+        for entities in ([bold, link], [link, bold]):
+            with self.subTest(entities=entities):
+                self.assertEqual(
+                    telegram_entities_to_max_html("Лучший VPN", entities),
+                    f'<a href="{url}"><b>Лучший VPN</b></a>',
+                )
+
+    def test_vpn_link_escapes_its_label_and_rejects_other_targets(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        text = "Лучший <VPN> & тест"
+        allowed = MessageEntityTextUrl(offset=0, length=len(text), url=url)
+        rejected = MessageEntityTextUrl(offset=0, length=len(text), url=url + "&ad=1")
+
+        self.assertEqual(
+            telegram_entities_to_max_html(text, [allowed]),
+            f'<a href="{url}">Лучший &lt;VPN&gt; &amp; тест</a>',
+        )
+        self.assertEqual(
+            telegram_entities_to_max_html(text, [rejected]),
+            "Лучший &lt;VPN&gt; &amp; тест",
+        )
+
+    def test_allowed_vpn_link_survives_max_chunk_boundaries(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        text = "Лучший VPN " * 350
+        link = MessageEntityTextUrl(offset=0, length=len(text), url=url)
+        chunks = _split_text(text, [link])
+        self.assertGreater(len(chunks), 1)
+        for value, entities in chunks:
+            self.assertEqual(
+                telegram_entities_to_max_html(value, entities),
+                f'<a href="{url}">{value}</a>',
+            )
+
     def test_converts_utf16_telegram_formatting_to_safe_max_html(self):
         text = "🙂 Жирный & курсив"
         bold = MessageEntityBold(offset=3, length=6)
@@ -90,6 +137,45 @@ class PublisherFormattingTests(unittest.TestCase):
 
 
 class PublisherTests(unittest.IsolatedAsyncioTestCase):
+    async def test_publishes_only_exact_vpn_link_and_channel_signature(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        for target in (url, url + "&ad=1"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                state = MigrationState(Path(directory) / "state.sqlite3")
+                try:
+                    state.enqueue(
+                        "source", "message:1", (1,), "video", 1,
+                        datetime.now(timezone.utc),
+                    )
+                    item = state.claim("video")
+                    source = video_message()
+                    source.raw_text = source.message = "#anime\nЛучший VPN\nАНИМЕ В ТГ"
+                    source.entities = [
+                        MessageEntityTextUrl(offset=7, length=10, url=target),
+                        MessageEntityTextUrl(
+                            offset=18, length=10, url="https://t.me/foreign",
+                        ),
+                    ]
+                    telegram = FakeTelegramClient({1: source})
+                    max_client = FakeMaxClient()
+                    publisher = PostPublisher(
+                        telegram, state, "webnmy", max_client,
+                        default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
+                    )
+
+                    await publisher.publish(item)
+
+                    expected = "#anime"
+                    if target == url:
+                        expected += f'\n<a href="{url}">Лучший VPN</a>'
+                    expected += '\n\n<a href="https://t.me/webm4ik">НАШ ТГК</a>'
+                    self.assertEqual(max_client.sends[0][0], expected)
+                    self.assertNotIn("foreign", max_client.sends[0][0])
+                    self.assertIsNone(telegram.edited[0][2]["buttons"])
+                    self.assertEqual(state.queue_item(item.id).status, "published")
+                finally:
+                    state.close()
+
     async def test_ai_caption_is_added_only_when_source_caption_is_empty(self):
         with tempfile.TemporaryDirectory() as directory:
             state = MigrationState(Path(directory) / "state.sqlite3")

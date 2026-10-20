@@ -42,8 +42,15 @@ _EXTERNAL_PROMO_RE = re.compile(
     r")"
 )
 
-# Свою рекламную вставку сохраняем вместе со скрытой Telegram-ссылкой.
-_ALLOWED_LINK_ANCHOR_RE = re.compile(r"(?i)\bлучший\s+vpn\b")
+ALLOWED_SOURCE_LINK_URL = "https://t.me/NosokVPNBot?start=partner_8235497168"
+
+
+def is_allowed_source_link(entity: Any) -> bool:
+    """Match the complete hidden-link target, never its visible label."""
+    return (
+        entity.__class__.__name__.lower() == "messageentitytexturl"
+        and getattr(entity, "url", None) == ALLOWED_SOURCE_LINK_URL
+    )
 
 
 @dataclass(frozen=True)
@@ -167,10 +174,7 @@ def _removal_spans(text: str, entities: list[Any] | None) -> list[tuple[int, int
         start = _index_from_utf16(text, start_u16)
         end = _index_from_utf16(text, end_u16)
 
-        # "ЛУЧШИЙ VPN" — наша разрешённая рекламная ссылка.
-        # Не удаляем ни текст, ни встроенный URL entity.
-        visible_text = text[start:end]
-        if _ALLOWED_LINK_ANCHOR_RE.search(visible_text):
+        if is_allowed_source_link(entity):
             continue
 
         spans.append(_line_span(text, start, end))

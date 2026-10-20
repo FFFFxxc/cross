@@ -1,0 +1,17 @@
+{
+  "base": "e4b53a9982d1e0c1781bf265ce8a0960cc9dd3b2",
+  "original": {
+    "tg_migrator/selection.py": "fdc9bc664cd4c7cf24e76f32a4a5b5581fbe8a9cb22beb51ca5e62330adfbe5d",
+    "tg_migrator/publisher.py": "42079a17970113d9ee84bbe13f3ced78167588b99b0a88a07ee05275098e42bf",
+    "tests/test_selection.py": "d7ebd83117a98efbe3c1b3bd55770261b77d516f6e313579a505dc2f1ac2b49c",
+    "tests/test_publisher.py": "6819fdd4ad10e8f38007938e6c07e77cf2937d0c178ea698eb4b87a4a7f51ea0",
+    "README.md": "84085e8255bc156e141b8ea3a01f180fd102bf4ee8dba5d3d023f5590ccefdd6"
+  },
+  "modified": {
+    "tg_migrator/selection.py": "0205bb93d2d0cf0276049d5551a83e6ccf63b2574036c8bf399a05b4f0ba2ff5",
+    "tg_migrator/publisher.py": "905b07063c1f10a19cd79767e68f9bb67cf678aee5996b7d374a7d1b2f7513b1",
+    "tests/test_selection.py": "a3a5eb82be2bb26460201dcfc0b3421d0b54c255cb5cf0f209a014c01fb67dd6",
+    "tests/test_publisher.py": "d231525b9263b6f69f317234f61dbb1337f5d7c110448b180bff816f4010ef98",
+    "README.md": "aeb13e089feb2497d7f5d8fddbe127c5e404a6e59672238865e063412b61cef9"
+  }
+}

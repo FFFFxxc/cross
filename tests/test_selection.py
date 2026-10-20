@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
+
 from tg_migrator.post_metadata import caption_excerpt, post_metrics
 from tg_migrator.selection import (
     Post,
@@ -55,6 +57,62 @@ async def iterator(items):
 
 
 class SelectionTests(unittest.IsolatedAsyncioTestCase):
+    def test_vpn_exception_requires_the_exact_target_not_the_label(self):
+        allowed = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        targets = (
+            "https://bad.example",
+            "https://t.me/NosokVPNBot",
+            allowed.replace("8235497168", "999"),
+            allowed.replace("NosokVPNBot", "OtherVPNBot"),
+            allowed.replace("t.me/", "t.me.evil.example/"),
+            allowed.replace("t.me/", "t.me@evil.example/"),
+            allowed.replace("https:", "http:"),
+            allowed + "&ad=1",
+            allowed + "#ad",
+            allowed + "0",
+            allowed + '" onclick="alert(1)',
+            "javascript:alert(1)",
+        )
+        for url in targets:
+            with self.subTest(url=url):
+                cleaned, entities = sanitize_message_text(
+                    "Пост\nЛучший VPN",
+                    [MessageEntityTextUrl(offset=5, length=10, url=url)],
+                )
+                self.assertEqual(cleaned, "Пост")
+                self.assertEqual(entities, [])
+
+    def test_exact_vpn_url_survives_foreign_lines_and_utf16_offset_shift(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        removed = "Сайт https://bad.example\n"
+        text = removed + "😀 #аниме\nЛучший ВПН\nАНИМЕ В ТГ"
+        prefix = removed + "😀 #аниме\n"
+        vpn = MessageEntityTextUrl(
+            offset=len(prefix.encode("utf-16-le")) // 2, length=10, url=url,
+        )
+        foreign = MessageEntityTextUrl(
+            offset=len((prefix + "Лучший ВПН\n").encode("utf-16-le")) // 2,
+            length=10,
+            url="https://t.me/foreign",
+        )
+
+        cleaned, entities = sanitize_message_text(text, [vpn, foreign])
+
+        self.assertEqual(cleaned, "😀 #аниме\nЛучший ВПН")
+        self.assertEqual(len(entities), 1)
+        self.assertEqual(entities[0].url, url)
+        self.assertEqual(entities[0].offset, len("😀 #аниме\n".encode("utf-16-le")) // 2)
+        self.assertEqual(vpn.offset, len(prefix.encode("utf-16-le")) // 2)
+
+    def test_visible_vpn_url_does_not_expand_the_hidden_link_exception(self):
+        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
+        cleaned, entities = sanitize_message_text(
+            "Пост\n" + url,
+            [MessageEntityUrl(offset=5, length=len(url))],
+        )
+        self.assertEqual(cleaned, "Пост")
+        self.assertEqual(entities, [])
+
     def test_advertising_marker_matches_exact_word_but_not_anime_art_term(self):
         ads = Post(
             "album:1",

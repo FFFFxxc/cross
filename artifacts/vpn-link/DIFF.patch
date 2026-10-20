@@ -1,0 +1,295 @@
+diff --git a/README.md b/README.md
+index 4178364..d7efd7e 100644
+--- a/README.md
++++ b/README.md
+@@ -22,12 +22,23 @@
+ - сохранять обычный текст и Telegram-форматирование;
+ - удалять из источника видимые URL, скрытые ссылки, `@username`, рекламные
+   строки и осиротевшие рекламные эмодзи;
+-- добавлять в MAX ровно одну изменяемую подпись — по умолчанию
++- сохранять кликабельной только исходную скрытую ссылку
++  `https://t.me/NosokVPNBot?start=partner_8235497168` (например, «Лучший VPN»);
++- добавлять в MAX одну изменяемую подпись — по умолчанию
+   [НАШ ТГК](https://t.me/webm4ik);
+ - скачивать медиа пользовательской сессией Telethon, поэтому видео больше
+   20 МБ не упираются в ограничение Telegram Bot API;
+ - хранить настройки, очередь, расписание и дедупликацию в Neon/PostgreSQL.
+ 
++Исключение для VPN сравнивает полный URL без преобразований, а не подпись,
++имя бота, домен или префикс адреса. Другой `start`, дополнительные параметры
++и чужая ссылка под тем же текстом «Лучший VPN» исключение не получают.
++Адрес задан константой `ALLOWED_SOURCE_LINK_URL` в `tg_migrator/selection.py`;
++тот же критерий используется фильтром и конвертером MAX HTML. Кнопки источника
++по-прежнему удаляются. Правило действует при публикации из оригинального
++Telegram-поста, включая ещё не опубликованные элементы очереди; уже вышедшие
++посты автоматически не редактируются.
++
+ ## Веб-панель
+ 
+ В папке `dashboard/` находится публичная панель для Vercel. В ней можно:
+diff --git a/tests/test_publisher.py b/tests/test_publisher.py
+index 91d22b4..2a9cac9 100644
+--- a/tests/test_publisher.py
++++ b/tests/test_publisher.py
+@@ -4,7 +4,7 @@ from datetime import datetime, timezone
+ from pathlib import Path
+ from types import SimpleNamespace
+ 
+-from telethon.tl.types import MessageEntityBold, MessageEntityItalic
++from telethon.tl.types import MessageEntityBold, MessageEntityItalic, MessageEntityTextUrl
+ 
+ from tg_migrator.max_client import AmbiguousMaxSendError, MaxAttachment
+ from tg_migrator.publisher import PostPublisher, _split_text, telegram_entities_to_max_html
+@@ -69,6 +69,53 @@ def video_message(message_id=1):
+ 
+ 
+ class PublisherFormattingTests(unittest.TestCase):
++    def test_renders_exact_vpn_link_as_clickable_max_html(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        text = "😀 Лучший VPN"
++        link = MessageEntityTextUrl(offset=3, length=10, url=url)
++
++        rendered = telegram_entities_to_max_html(text, [link])
++
++        self.assertEqual(rendered, f'😀 <a href="{url}">Лучший VPN</a>')
++
++    def test_vpn_link_and_bold_have_valid_nesting_in_both_entity_orders(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        link = MessageEntityTextUrl(offset=0, length=10, url=url)
++        bold = MessageEntityBold(offset=0, length=10)
++        for entities in ([bold, link], [link, bold]):
++            with self.subTest(entities=entities):
++                self.assertEqual(
++                    telegram_entities_to_max_html("Лучший VPN", entities),
++                    f'<a href="{url}"><b>Лучший VPN</b></a>',
++                )
++
++    def test_vpn_link_escapes_its_label_and_rejects_other_targets(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        text = "Лучший <VPN> & тест"
++        allowed = MessageEntityTextUrl(offset=0, length=len(text), url=url)
++        rejected = MessageEntityTextUrl(offset=0, length=len(text), url=url + "&ad=1")
++
++        self.assertEqual(
++            telegram_entities_to_max_html(text, [allowed]),
++            f'<a href="{url}">Лучший &lt;VPN&gt; &amp; тест</a>',
++        )
++        self.assertEqual(
++            telegram_entities_to_max_html(text, [rejected]),
++            "Лучший &lt;VPN&gt; &amp; тест",
++        )
++
++    def test_allowed_vpn_link_survives_max_chunk_boundaries(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        text = "Лучший VPN " * 350
++        link = MessageEntityTextUrl(offset=0, length=len(text), url=url)
++        chunks = _split_text(text, [link])
++        self.assertGreater(len(chunks), 1)
++        for value, entities in chunks:
++            self.assertEqual(
++                telegram_entities_to_max_html(value, entities),
++                f'<a href="{url}">{value}</a>',
++            )
++
+     def test_converts_utf16_telegram_formatting_to_safe_max_html(self):
+         text = "🙂 Жирный & курсив"
+         bold = MessageEntityBold(offset=3, length=6)
+@@ -90,6 +137,45 @@ class PublisherFormattingTests(unittest.TestCase):
+ 
+ 
+ class PublisherTests(unittest.IsolatedAsyncioTestCase):
++    async def test_publishes_only_exact_vpn_link_and_channel_signature(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        for target in (url, url + "&ad=1"):
++            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
++                state = MigrationState(Path(directory) / "state.sqlite3")
++                try:
++                    state.enqueue(
++                        "source", "message:1", (1,), "video", 1,
++                        datetime.now(timezone.utc),
++                    )
++                    item = state.claim("video")
++                    source = video_message()
++                    source.raw_text = source.message = "#anime\nЛучший VPN\nАНИМЕ В ТГ"
++                    source.entities = [
++                        MessageEntityTextUrl(offset=7, length=10, url=target),
++                        MessageEntityTextUrl(
++                            offset=18, length=10, url="https://t.me/foreign",
++                        ),
++                    ]
++                    telegram = FakeTelegramClient({1: source})
++                    max_client = FakeMaxClient()
++                    publisher = PostPublisher(
++                        telegram, state, "webnmy", max_client,
++                        default_signature=("НАШ ТГК", "https://t.me/webm4ik"),
++                    )
++
++                    await publisher.publish(item)
++
++                    expected = "#anime"
++                    if target == url:
++                        expected += f'\n<a href="{url}">Лучший VPN</a>'
++                    expected += '\n\n<a href="https://t.me/webm4ik">НАШ ТГК</a>'
++                    self.assertEqual(max_client.sends[0][0], expected)
++                    self.assertNotIn("foreign", max_client.sends[0][0])
++                    self.assertIsNone(telegram.edited[0][2]["buttons"])
++                    self.assertEqual(state.queue_item(item.id).status, "published")
++                finally:
++                    state.close()
++
+     async def test_ai_caption_is_added_only_when_source_caption_is_empty(self):
+         with tempfile.TemporaryDirectory() as directory:
+             state = MigrationState(Path(directory) / "state.sqlite3")
+diff --git a/tests/test_selection.py b/tests/test_selection.py
+index ed7e209..f003f3c 100644
+--- a/tests/test_selection.py
++++ b/tests/test_selection.py
+@@ -2,6 +2,8 @@ import unittest
+ from datetime import datetime, timezone
+ from types import SimpleNamespace
+ 
++from telethon.tl.types import MessageEntityTextUrl, MessageEntityUrl
++
+ from tg_migrator.post_metadata import caption_excerpt, post_metrics
+ from tg_migrator.selection import (
+     Post,
+@@ -55,6 +57,62 @@ async def iterator(items):
+ 
+ 
+ class SelectionTests(unittest.IsolatedAsyncioTestCase):
++    def test_vpn_exception_requires_the_exact_target_not_the_label(self):
++        allowed = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        targets = (
++            "https://bad.example",
++            "https://t.me/NosokVPNBot",
++            allowed.replace("8235497168", "999"),
++            allowed.replace("NosokVPNBot", "OtherVPNBot"),
++            allowed.replace("t.me/", "t.me.evil.example/"),
++            allowed.replace("t.me/", "t.me@evil.example/"),
++            allowed.replace("https:", "http:"),
++            allowed + "&ad=1",
++            allowed + "#ad",
++            allowed + "0",
++            allowed + '" onclick="alert(1)',
++            "javascript:alert(1)",
++        )
++        for url in targets:
++            with self.subTest(url=url):
++                cleaned, entities = sanitize_message_text(
++                    "Пост\nЛучший VPN",
++                    [MessageEntityTextUrl(offset=5, length=10, url=url)],
++                )
++                self.assertEqual(cleaned, "Пост")
++                self.assertEqual(entities, [])
++
++    def test_exact_vpn_url_survives_foreign_lines_and_utf16_offset_shift(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        removed = "Сайт https://bad.example\n"
++        text = removed + "😀 #аниме\nЛучший ВПН\nАНИМЕ В ТГ"
++        prefix = removed + "😀 #аниме\n"
++        vpn = MessageEntityTextUrl(
++            offset=len(prefix.encode("utf-16-le")) // 2, length=10, url=url,
++        )
++        foreign = MessageEntityTextUrl(
++            offset=len((prefix + "Лучший ВПН\n").encode("utf-16-le")) // 2,
++            length=10,
++            url="https://t.me/foreign",
++        )
++
++        cleaned, entities = sanitize_message_text(text, [vpn, foreign])
++
++        self.assertEqual(cleaned, "😀 #аниме\nЛучший ВПН")
++        self.assertEqual(len(entities), 1)
++        self.assertEqual(entities[0].url, url)
++        self.assertEqual(entities[0].offset, len("😀 #аниме\n".encode("utf-16-le")) // 2)
++        self.assertEqual(vpn.offset, len(prefix.encode("utf-16-le")) // 2)
++
++    def test_visible_vpn_url_does_not_expand_the_hidden_link_exception(self):
++        url = "https://t.me/NosokVPNBot?start=partner_8235497168"
++        cleaned, entities = sanitize_message_text(
++            "Пост\n" + url,
++            [MessageEntityUrl(offset=5, length=len(url))],
++        )
++        self.assertEqual(cleaned, "Пост")
++        self.assertEqual(entities, [])
++
+     def test_advertising_marker_matches_exact_word_but_not_anime_art_term(self):
+         ads = Post(
+             "album:1",
+diff --git a/tg_migrator/publisher.py b/tg_migrator/publisher.py
+index 444fc2b..2d08124 100644
+--- a/tg_migrator/publisher.py
++++ b/tg_migrator/publisher.py
+@@ -10,7 +10,7 @@ from urllib.parse import urlparse
+ from telethon.helpers import add_surrogate, del_surrogate
+ 
+ from .max_client import AmbiguousMaxSendError, MaxAttachment, MaxClient
+-from .selection import sanitize_message_text
++from .selection import ALLOWED_SOURCE_LINK_URL, is_allowed_source_link, sanitize_message_text
+ from .state import MigrationState, QueueItem
+ 
+ 
+@@ -39,6 +39,11 @@ def telegram_entities_to_max_html(text: str, entities: list | tuple) -> str:
+     normalized = []
+     for entity in entities or ():
+         tags = _ENTITY_TAGS.get(entity.__class__.__name__.lower())
++        if is_allowed_source_link(entity):
++            tags = (
++                f'<a href="{html.escape(ALLOWED_SOURCE_LINK_URL, quote=True)}">',
++                "</a>",
++            )
+         start = int(getattr(entity, "offset", -1))
+         length = int(getattr(entity, "length", 0))
+         end = start + length
+@@ -51,9 +56,15 @@ def telegram_entities_to_max_html(text: str, entities: list | tuple) -> str:
+         openings.setdefault(item[0], []).append(item)
+         closings.setdefault(item[1], []).append(item)
+     for values in openings.values():
+-        values.sort(key=lambda value: value[1], reverse=True)
++        values.sort(
++            key=lambda value: (value[1], value[2].startswith("<a ")),
++            reverse=True,
++        )
+     for values in closings.values():
+-        values.sort(key=lambda value: value[0], reverse=True)
++        values.sort(
++            key=lambda value: (value[0], not value[2].startswith("<a ")),
++            reverse=True,
++        )
+ 
+     positions = sorted({0, len(surrogate), *openings, *closings})
+     result: list[str] = []
+diff --git a/tg_migrator/selection.py b/tg_migrator/selection.py
+index b9c8fdf..cf877a9 100644
+--- a/tg_migrator/selection.py
++++ b/tg_migrator/selection.py
+@@ -42,8 +42,15 @@ _EXTERNAL_PROMO_RE = re.compile(
+     r")"
+ )
+ 
+-# Свою рекламную вставку сохраняем вместе со скрытой Telegram-ссылкой.
+-_ALLOWED_LINK_ANCHOR_RE = re.compile(r"(?i)\bлучший\s+vpn\b")
++ALLOWED_SOURCE_LINK_URL = "https://t.me/NosokVPNBot?start=partner_8235497168"
++
++
++def is_allowed_source_link(entity: Any) -> bool:
++    """Match the complete hidden-link target, never its visible label."""
++    return (
++        entity.__class__.__name__.lower() == "messageentitytexturl"
++        and getattr(entity, "url", None) == ALLOWED_SOURCE_LINK_URL
++    )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -167,10 +174,7 @@ def _removal_spans(text: str, entities: list[Any] | None) -> list[tuple[int, int
+         start = _index_from_utf16(text, start_u16)
+         end = _index_from_utf16(text, end_u16)
+ 
+-        # "ЛУЧШИЙ VPN" — наша разрешённая рекламная ссылка.
+-        # Не удаляем ни текст, ни встроенный URL entity.
+-        visible_text = text[start:end]
+-        if _ALLOWED_LINK_ANCHOR_RE.search(visible_text):
++        if is_allowed_source_link(entity):
+             continue
+ 
+         spans.append(_line_span(text, start, end))

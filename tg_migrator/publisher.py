@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from telethon.helpers import add_surrogate, del_surrogate
 
 from .max_client import AmbiguousMaxSendError, MaxAttachment, MaxClient
-from .selection import sanitize_message_text
+from .selection import ALLOWED_SOURCE_LINK_URL, is_allowed_source_link, sanitize_message_text
 from .state import MigrationState, QueueItem
 
 
@@ -39,6 +39,11 @@ def telegram_entities_to_max_html(text: str, entities: list | tuple) -> str:
     normalized = []
     for entity in entities or ():
         tags = _ENTITY_TAGS.get(entity.__class__.__name__.lower())
+        if is_allowed_source_link(entity):
+            tags = (
+                f'<a href="{html.escape(ALLOWED_SOURCE_LINK_URL, quote=True)}">',
+                "</a>",
+            )
         start = int(getattr(entity, "offset", -1))
         length = int(getattr(entity, "length", 0))
         end = start + length
@@ -51,9 +56,15 @@ def telegram_entities_to_max_html(text: str, entities: list | tuple) -> str:
         openings.setdefault(item[0], []).append(item)
         closings.setdefault(item[1], []).append(item)
     for values in openings.values():
-        values.sort(key=lambda value: value[1], reverse=True)
+        values.sort(
+            key=lambda value: (value[1], value[2].startswith("<a ")),
+            reverse=True,
+        )
     for values in closings.values():
-        values.sort(key=lambda value: value[0], reverse=True)
+        values.sort(
+            key=lambda value: (value[0], not value[2].startswith("<a ")),
+            reverse=True,
+        )
 
     positions = sorted({0, len(surrogate), *openings, *closings})
     result: list[str] = []
