@@ -1,0 +1,844 @@
+diff --git a/max_reactions/.dockerignore b/max_reactions/.dockerignore
+new file mode 100644
+index 0000000..3378ce0
+--- /dev/null
++++ b/max_reactions/.dockerignore
+@@ -0,0 +1,7 @@
++__pycache__
++*.pyc
++.auth
++*.db
++*.db-*
++*.sqlite3
++*.png
+diff --git a/max_reactions/.gitignore b/max_reactions/.gitignore
+new file mode 100644
+index 0000000..4bebfbc
+--- /dev/null
++++ b/max_reactions/.gitignore
+@@ -0,0 +1,5 @@
++.auth/
++*.db
++*.db-*
++*.sqlite3
++*.png
+diff --git a/max_reactions/Dockerfile b/max_reactions/Dockerfile
+new file mode 100644
+index 0000000..8294ae0
+--- /dev/null
++++ b/max_reactions/Dockerfile
+@@ -0,0 +1,13 @@
++FROM python:3.12-slim
++RUN useradd --create-home --uid 1000 app \
++    && mkdir -p /data /opt/service \
++    && chown app:app /data /opt/service
++WORKDIR /opt/service
++COPY requirements.txt /opt/service/requirements.txt
++RUN pip install --no-cache-dir -r requirements.txt
++COPY --chown=app:app . /opt/service/max_reactions
++USER app
++ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
++HEALTHCHECK --interval=60s --timeout=10s --start-period=90s \
++    CMD ["python", "-m", "max_reactions", "health"]
++CMD ["python", "-m", "max_reactions", "run"]
+diff --git a/max_reactions/README.md b/max_reactions/README.md
+new file mode 100644
+index 0000000..d596151
+--- /dev/null
++++ b/max_reactions/README.md
+@@ -0,0 +1,77 @@
++# MAX reactions — отдельный сервис Desiree
++
++Единственная цель: один обычный MAX-аккаунт ставит 👍 новым публикациям
++`https://max.ru/channel_animenaruto`. Это не замена `cross` и не часть
++`tg-publisher`. Никакие существующие токены, `.env`, Telegram-сессии,
++PostgreSQL или настройки SOCKS5 не читаются и не меняются.
++
++## Изоляция
++
++- Контейнер: `cross-max-reactions`; одноразовый вход: `cross-max-reactions-auth`.
++- Образ: `cross-max-reactions:20261021`, отдельный Dockerfile и pinned requirements.
++- Отдельный том: `cross-max-reactions-data:/data`; `cross-data` не подключается.
++- Сеть `host`, без входящего HTTP-порта; MAX подключается напрямую, без Telegram SOCKS5.
++- Лимиты: 256 МБ, 0.25 CPU, 64 PID; read-only rootfs, сброшенные capabilities.
++- Конфигурация: `settings.toml`, read-only bind mount; изменение требует
++  перезапуска только нового контейнера, а не пересборки `cross`.
++
++## Подключение аккаунта — только после сборки и тестов
++
++На сервере в `~/cross`:
++
++```bash
++bash max_reactions/manage.sh build
++bash max_reactions/manage.sh auth
++```
++
++При интерактивном запуске QR отображается в терминале. Его сканируют
++в приложении MAX нужного аккаунта и подтверждают вход. Если включён пароль 2FA,
++он вводится скрыто в этом же терминале. SMS-коды, пароль и SQLite-сессию
++не отправляют в чат. В headless-режиме `auth-bg` QR временно сохраняется
++в `/data/connect.png` внутри нового контейнера; по завершении или таймауту
++авторизации изображение удаляется. QR имеет короткий срок жизни.
++
++После входа сервис вступает только в указанный публичный канал, проверяет
++чтение его истории и сохраняет числовую привязку канала и аккаунта. Событие
++`auth_complete` подтверждает завершение этого шага. Реакции при входе не ставятся.
++
++```bash
++bash max_reactions/manage.sh start
++bash max_reactions/manage.sh status
++bash max_reactions/manage.sh logs
++```
++
++Фоновый `run` не начинает новый QR-вход сам. Потеря или отзыв авторизации
++требует отдельного `auth`; сессию одновременно держит только один процесс.
++Для остановки: `bash max_reactions/manage.sh stop`.
++
++## Поведение
++
++При каждом старте фиксируется текущий момент: более старые публикации
++игнорируются, включая появившиеся во время простоя. Опрос — раз в 30 секунд,
++не более одной новой реакции за опрос, возраст публикации — до 15 минут.
++Другие чаты и служебные сообщения отбрасываются. Выбранная вручную реакция
++не заменяется. Перед запросом атомарно сохраняется claim в отдельной SQLite:
++ошибка, таймаут или перезапуск не повторяют сомнительный запрос для того же поста.
++`reaction_confirmed` означает подтверждённую сервером реакцию;
++`reaction_requested` — запрос без подтверждения в ответе. Тексты сообщений,
++токены, QR-ссылки и содержимое сессии не записываются в журналы.
++
++Тестовый режим `manage.sh dry-run` читает только историю и журналирует
++подходящие новые посты, не ставит и не резервирует реакции.
++
++## Проверка и откат
++
++```bash
++python -m unittest discover -s max_reactions/tests -q
++bash artifacts/max-reactions/ROLLBACK.sh
++```
++
++Откат останавливает и удаляет только два новых контейнера. Новый том
++с авторизацией сохраняется для повторного запуска; существующие контейнеры,
++тома и исходники не меняются. Исходники сервиса можно убрать отдельным
++обратным patch из `artifacts/max-reactions/DIFF.patch`.
++
++SDK: [PyMax 2.4.1](https://github.com/MaxApiTeam/PyMax),
++[QR-авторизация](https://docs.pymax.org/getting-started.html),
++[реакции](https://docs.pymax.org/api/client-web.html#pymax.WebClient.add_reaction).
+diff --git a/max_reactions/__init__.py b/max_reactions/__init__.py
+new file mode 100644
+index 0000000..f4bf678
+--- /dev/null
++++ b/max_reactions/__init__.py
+@@ -0,0 +1 @@
++"""Isolated, single-account reactions for one configured MAX channel."""
+diff --git a/max_reactions/__main__.py b/max_reactions/__main__.py
+new file mode 100644
+index 0000000..e6a59a7
+--- /dev/null
++++ b/max_reactions/__main__.py
+@@ -0,0 +1,199 @@
++from __future__ import annotations
++
++import argparse
++import asyncio
++import contextlib
++import getpass
++import json
++import logging
++import os
++import signal
++import sys
++import time
++from pathlib import Path
++
++from .config import Settings, session_ready
++from .worker import ReactionState, ReactionWorker, event
++
++
++class AuthRequired(RuntimeError):
++    pass
++
++
++class QRFile:
++    def __init__(self, path: Path, allowed: bool):
++        self.path = path
++        self.allowed = allowed
++
++    async def show_qr(self, qr_url: str) -> None:
++        if not self.allowed:
++            raise AuthRequired("AUTH_REQUIRED: run the separate auth command")
++        import qrcode
++        image = qrcode.make(qr_url)
++        image.save(self.path)
++        self.path.chmod(0o600)
++        if sys.stdin.isatty():
++            code = qrcode.QRCode()
++            code.add_data(qr_url)
++            code.print_ascii()
++        event("qr_ready", expires_within_seconds=180)
++
++
++class TerminalPassword:
++    async def get_password(self, hint: str | None) -> str:
++        if not sys.stdin.isatty():
++            raise AuthRequired("2FA_REQUIRES_INTERACTIVE_TERMINAL")
++        return await asyncio.to_thread(getpass.getpass, "MAX 2FA (terminal only): ")
++
++
++@contextlib.contextmanager
++def service_lock(path: Path):
++    with path.open("a+b") as stream:
++        if os.name == "nt":
++            import msvcrt
++            stream.seek(0)
++            if not stream.read(1):
++                stream.write(b"0")
++                stream.flush()
++            stream.seek(0)
++            msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
++        else:
++            import fcntl
++            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
++        yield
++
++
++def write_json(path: Path, value: dict) -> None:
++    temporary = path.with_suffix(".tmp")
++    temporary.write_text(json.dumps(value), encoding="utf-8")
++    temporary.chmod(0o600)
++    temporary.replace(path)
++
++
++def read_target(data_dir: Path, settings: Settings) -> dict:
++    target = json.loads((data_dir / "target.json").read_text(encoding="utf-8"))
++    if (
++        target.get("channel_url") != settings.channel_url
++        or type(target.get("chat_id")) is not int or target["chat_id"] == 0
++        or type(target.get("account_id")) is not int or target["account_id"] <= 0
++    ):
++        raise AuthRequired("TARGET_BINDING_INVALID")
++    return target
++
++
++async def connected_job(command: str, settings: Settings, data_dir: Path, dry_run: bool) -> None:
++    from pymax import WebClient
++    from pymax.auth.qr import QrAuthFlow
++    from pymax.config import ExtraConfig
++
++    auth = command == "auth"
++    qr_path = data_dir / "connect.png"
++    flow = QrAuthFlow(QRFile(qr_path, auth), password_provider=TerminalPassword())
++    client = WebClient(
++        work_dir=str(data_dir), session_name="max-session.db", auth_flow=flow,
++        extra_config=ExtraConfig(relogin=False, reconnect=False, log_level="CRITICAL"),
++    )
++    stop = asyncio.Event()
++    loop = asyncio.get_running_loop()
++    for sig in (signal.SIGINT, signal.SIGTERM):
++        try:
++            loop.add_signal_handler(sig, stop.set)
++        except NotImplementedError:
++            pass
++    state = None
++    try:
++        await asyncio.wait_for(
++            client.connect(),
++            timeout=settings.auth_timeout_seconds if auth else settings.request_timeout_seconds,
++        )
++        me = client.me
++        account_id = getattr(getattr(me, "contact", None), "id", None)
++        if type(account_id) is not int or account_id <= 0:
++            raise AuthRequired("ACCOUNT_ID_MISSING")
++        if auth:
++            # Only this explicitly requested channel may be joined.
++            chat = await asyncio.wait_for(
++                client.join_channel(settings.channel_url), settings.request_timeout_seconds,
++            )
++            if chat is None or type(chat.id) is not int or chat.id == 0:
++                raise AuthRequired("CHANNEL_NOT_RESOLVED")
++            await asyncio.wait_for(
++                client.fetch_history(chat.id, backward=1), settings.request_timeout_seconds,
++            )
++            write_json(data_dir / "target.json", {
++                "account_id": account_id, "chat_id": chat.id,
++                "channel_url": settings.channel_url,
++            })
++            event("auth_complete", account_id=account_id, chat_id=chat.id)
++            return
++
++        target = read_target(data_dir, settings)
++        if target["account_id"] != account_id:
++            raise AuthRequired("ACCOUNT_BINDING_MISMATCH")
++        state = ReactionState(data_dir / "reactions.sqlite3")
++        worker = ReactionWorker(
++            client, state, channel_id=target["chat_id"], emoji=settings.emoji,
++            started_at_ms=int(time.time() * 1000),
++            max_age_ms=settings.max_age_seconds * 1000,
++            max_per_poll=settings.max_per_poll, dry_run=dry_run,
++        )
++        event("worker_ready", chat_id=target["chat_id"], dry_run=dry_run)
++        while not stop.is_set():
++            if not client.is_connected:
++                raise ConnectionError("MAX_CONNECTION_CLOSED")
++            messages = await asyncio.wait_for(
++                client.fetch_history(target["chat_id"], backward=settings.history_limit),
++                settings.request_timeout_seconds,
++            )
++            await asyncio.wait_for(
++                worker.tick(messages, now_ms=int(time.time() * 1000)),
++                settings.request_timeout_seconds,
++            )
++            write_json(data_dir / "heartbeat.json", {"time": time.time()})
++            try:
++                await asyncio.wait_for(stop.wait(), settings.poll_seconds)
++            except TimeoutError:
++                pass
++    finally:
++        qr_path.unlink(missing_ok=True)
++        if state is not None:
++            state.close()
++        await client.close()
++
++
++def main() -> int:
++    os.umask(0o077)
++    logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stdout)
++    parser = argparse.ArgumentParser()
++    parser.add_argument("command", choices=("auth", "run", "status", "health"))
++    parser.add_argument("--config", type=Path, default=Path(__file__).with_name("settings.toml"))
++    parser.add_argument("--data-dir", type=Path, default=Path("/data"))
++    parser.add_argument("--dry-run", action="store_true")
++    args = parser.parse_args()
++    try:
++        settings = Settings.load(args.config)
++        data_dir = args.data_dir.resolve()
++        if args.command in {"status", "health", "run"}:
++            if not session_ready(data_dir):
++                event("auth_required")
++                return 2
++            read_target(data_dir, settings)
++        if args.command == "status":
++            event("session_ready")
++            return 0
++        if args.command == "health":
++            heartbeat = json.loads((data_dir / "heartbeat.json").read_text(encoding="utf-8"))
++            return 0 if 0 <= time.time() - heartbeat["time"] < 180 else 1
++        data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
++        with service_lock(data_dir / "service.lock"):
++            asyncio.run(connected_job(args.command, settings, data_dir, args.dry_run))
++        return 0
++    except KeyboardInterrupt:
++        return 0
++    except Exception as error:
++        event("service_failed", error_type=type(error).__name__)
++        return 1
++
++
++if __name__ == "__main__":
++    raise SystemExit(main())
+diff --git a/max_reactions/config.py b/max_reactions/config.py
+new file mode 100644
+index 0000000..d898492
+--- /dev/null
++++ b/max_reactions/config.py
+@@ -0,0 +1,55 @@
++from __future__ import annotations
++
++import sqlite3
++import tomllib
++from dataclasses import dataclass
++from pathlib import Path
++
++
++CHANNEL_URL = "https://max.ru/channel_animenaruto"
++
++
++@dataclass(frozen=True)
++class Settings:
++    channel_url: str = CHANNEL_URL
++    emoji: str = "👍"
++    poll_seconds: int = 30
++    history_limit: int = 20
++    max_age_seconds: int = 900
++    max_per_poll: int = 1
++    request_timeout_seconds: int = 30
++    auth_timeout_seconds: int = 180
++
++    @classmethod
++    def load(cls, path: Path) -> Settings:
++        with path.open("rb") as stream:
++            settings = cls(**tomllib.load(stream))
++        if settings.channel_url != CHANNEL_URL:
++            raise ValueError("Only channel_animenaruto is configured for this service")
++        if not isinstance(settings.emoji, str) or not 1 <= len(settings.emoji) <= 16:
++            raise ValueError("Invalid reaction")
++        for name, minimum, maximum in (
++            ("poll_seconds", 15, 3600), ("history_limit", 1, 100),
++            ("max_age_seconds", 60, 3600), ("max_per_poll", 1, 5),
++            ("request_timeout_seconds", 5, 120), ("auth_timeout_seconds", 30, 600),
++        ):
++            value = getattr(settings, name)
++            if type(value) is not int or not minimum <= value <= maximum:
++                raise ValueError(f"Invalid {name}")
++        return settings
++
++
++def session_ready(data_dir: Path) -> bool:
++    path = data_dir / "max-session.db"
++    if not path.is_file():
++        return False
++    try:
++        connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=2)
++        try:
++            return bool(connection.execute(
++                "SELECT EXISTS(SELECT 1 FROM sessions WHERE length(token) > 0)"
++            ).fetchone()[0])
++        finally:
++            connection.close()
++    except sqlite3.Error:
++        return False
+diff --git a/max_reactions/manage.sh b/max_reactions/manage.sh
+new file mode 100644
+index 0000000..08b841d
+--- /dev/null
++++ b/max_reactions/manage.sh
+@@ -0,0 +1,58 @@
++#!/usr/bin/env bash
++set -euo pipefail
++DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
++IMAGE="${MAX_REACTIONS_IMAGE:-cross-max-reactions:20261021}"
++SERVICE=cross-max-reactions
++AUTH=cross-max-reactions-auth
++VOLUME=cross-max-reactions-data
++COMMON=(--network host --cap-drop ALL --security-opt no-new-privileges:true
++  --memory 256m --cpus 0.25 --pids-limit 64 --read-only
++  --tmpfs /tmp:rw,noexec,nosuid,size=16m
++  --mount "type=volume,source=$VOLUME,target=/data"
++  --mount "type=bind,source=$DIR/settings.toml,target=/opt/service/max_reactions/settings.toml,readonly"
++  --log-opt max-size=5m --log-opt max-file=2)
++
++running() { [[ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null || true)" == true ]]; }
++exists() { docker inspect "$1" >/dev/null 2>&1; }
++
++case "${1:-status}" in
++  build)
++    docker build --network host -t "$IMAGE" "$DIR"
++    ;;
++  auth|auth-bg)
++    if running "$SERVICE" || running "$AUTH"; then
++      echo 'REACTION_SESSION_IN_USE'; exit 1
++    fi
++    if exists "$AUTH"; then docker rm "$AUTH" >/dev/null; fi
++    if [[ "$1" == auth-bg ]]; then
++      docker run -d --name "$AUTH" --no-healthcheck "${COMMON[@]}" "$IMAGE" \
++        python -m max_reactions auth
++    else
++      TTY=(); if [[ -t 0 ]]; then TTY=(-it); fi
++      docker run "${TTY[@]}" --name "$AUTH" --no-healthcheck "${COMMON[@]}" "$IMAGE" \
++        python -m max_reactions auth
++    fi
++    ;;
++  start|dry-run)
++    if running "$AUTH" || exists "$SERVICE"; then
++      echo 'REACTION_CONTAINER_ALREADY_EXISTS_OR_AUTH_IN_PROGRESS'; exit 1
++    fi
++    docker run --rm --no-healthcheck "${COMMON[@]}" "$IMAGE" python -m max_reactions status
++    EXTRA=(); if [[ "$1" == dry-run ]]; then EXTRA=(--dry-run); fi
++    docker run -d --name "$SERVICE" --restart unless-stopped "${COMMON[@]}" "$IMAGE" \
++      python -m max_reactions run "${EXTRA[@]}"
++    ;;
++  status)
++    docker ps -a --filter "name=^/($SERVICE|$AUTH)$" --format '{{.Names}} {{.Status}}'
++    docker run --rm --no-healthcheck "${COMMON[@]}" "$IMAGE" python -m max_reactions status
++    ;;
++  logs)
++    docker logs --tail 30 "$SERVICE"
++    ;;
++  stop)
++    for name in "$SERVICE" "$AUTH"; do
++      if running "$name"; then docker stop -t 20 "$name"; fi
++    done
++    ;;
++  *) echo 'Usage: manage.sh build|auth|auth-bg|start|dry-run|status|logs|stop'; exit 2 ;;
++esac
+diff --git a/max_reactions/requirements.txt b/max_reactions/requirements.txt
+new file mode 100644
+index 0000000..fa01244
+--- /dev/null
++++ b/max_reactions/requirements.txt
+@@ -0,0 +1,24 @@
++aiofiles==25.1.0
++aiohappyeyeballs==2.7.1
++aiohttp==3.14.5
++aiosignal==1.4.0
++aiosqlite==0.22.1
++annotated-types==0.8.0
++attrs==26.1.0
++colorama==0.4.6
++frozenlist==1.8.0
++idna==3.20
++maxapi-python==2.4.1
++msgpack==1.2.3
++multidict==7.1.0
++pillow==11.3.0
++propcache==0.5.4
++pydantic==2.14.1
++pydantic_core==2.50.1
++python-socks==3.1.1
++qrcode==8.2
++typing-inspection==0.4.4
++typing_extensions==4.16.0
++websockets==17.3
++yarl==1.25.1
++zstandard==0.25.0
+diff --git a/max_reactions/settings.toml b/max_reactions/settings.toml
+new file mode 100644
+index 0000000..7d04ce9
+--- /dev/null
++++ b/max_reactions/settings.toml
+@@ -0,0 +1,8 @@
++channel_url = "https://max.ru/channel_animenaruto"
++emoji = "👍"
++poll_seconds = 30
++history_limit = 20
++max_age_seconds = 900
++max_per_poll = 1
++request_timeout_seconds = 30
++auth_timeout_seconds = 180
+diff --git a/max_reactions/tests/test_config.py b/max_reactions/tests/test_config.py
+new file mode 100644
+index 0000000..cc0c09b
+--- /dev/null
++++ b/max_reactions/tests/test_config.py
+@@ -0,0 +1,87 @@
++import asyncio
++import json
++import sqlite3
++import tempfile
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++from max_reactions.__main__ import AuthRequired, QRFile, read_target, service_lock
++from max_reactions.config import CHANNEL_URL, Settings, session_ready
++
++
++class ConfigTests(unittest.TestCase):
++    def setUp(self):
++        self.temporary = tempfile.TemporaryDirectory()
++        self.addCleanup(self.temporary.cleanup)
++        self.root = Path(self.temporary.name)
++
++    def load(self, text):
++        path = self.root / "settings.toml"
++        path.write_text(text, encoding="utf-8")
++        return Settings.load(path)
++
++    def test_defaults_are_single_channel_and_one_reaction_per_poll(self):
++        settings = self.load("")
++        self.assertEqual(settings.channel_url, CHANNEL_URL)
++        self.assertEqual(settings.max_per_poll, 1)
++        self.assertEqual(settings.emoji, "👍")
++
++    def test_other_channel_and_bad_numeric_settings_are_rejected(self):
++        for content in (
++            'channel_url="https://max.ru/other"', 'poll_seconds=0',
++            'max_per_poll=100', 'max_per_poll=true', 'unknown=1', 'emoji=""',
++        ):
++            with self.subTest(content=content), self.assertRaises((ValueError, TypeError)):
++                self.load(content)
++
++    def test_missing_session_probe_does_not_create_files(self):
++        self.assertFalse(session_ready(self.root))
++        self.assertEqual(list(self.root.iterdir()), [])
++
++    def test_session_readiness_reads_only_its_own_file(self):
++        path = self.root / "max-session.db"
++        with sqlite3.connect(path) as db:
++            db.execute("CREATE TABLE sessions(token TEXT)")
++            db.execute("INSERT INTO sessions VALUES ('')")
++        db.close()
++        self.assertFalse(session_ready(self.root))
++        with sqlite3.connect(path) as db:
++            db.execute("UPDATE sessions SET token='test-token'")
++        db.close()
++        before = path.read_bytes()
++        self.assertTrue(session_ready(self.root))
++        self.assertEqual(before, path.read_bytes())
++
++    def test_invalid_session_is_not_authenticated(self):
++        (self.root / "max-session.db").write_bytes(b"not sqlite")
++        self.assertFalse(session_ready(self.root))
++
++    def test_target_is_bound_to_configured_channel_and_account(self):
++        path = self.root / "target.json"
++        valid = {"channel_url": CHANNEL_URL, "chat_id": -42, "account_id": 123}
++        path.write_text(json.dumps(valid), encoding="utf-8")
++        self.assertEqual(read_target(self.root, Settings()), valid)
++        for field, value in (("channel_url", "other"), ("chat_id", 0), ("account_id", True)):
++            path.write_text(json.dumps({**valid, field: value}), encoding="utf-8")
++            with self.subTest(field=field), self.assertRaises(AuthRequired):
++                read_target(self.root, Settings())
++
++    def test_qr_is_forbidden_in_background_worker(self):
++        path = self.root / "connect.png"
++        with self.assertRaises(AuthRequired):
++            asyncio.run(QRFile(path, False).show_qr("https://example.test/qr"))
++        self.assertFalse(path.exists())
++
++    def test_auth_qr_provider_creates_real_png(self):
++        path = self.root / "connect.png"
++        with patch("sys.stdin.isatty", return_value=False):
++            asyncio.run(QRFile(path, True).show_qr("https://example.test/qr"))
++        self.assertTrue(path.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
++
++    def test_session_lock_prevents_two_workers(self):
++        path = self.root / "service.lock"
++        with service_lock(path), self.assertRaises(OSError), service_lock(path):
++            self.fail("Second process must not share the session")
++        with service_lock(path):
++            pass
+diff --git a/max_reactions/tests/test_worker.py b/max_reactions/tests/test_worker.py
+new file mode 100644
+index 0000000..1bfd1ac
+--- /dev/null
++++ b/max_reactions/tests/test_worker.py
+@@ -0,0 +1,123 @@
++import importlib
++import tempfile
++import unittest
++from pathlib import Path
++from types import SimpleNamespace
++
++
++CHANNEL = -77809668353385
++NOW = 2_000_000_000_000
++
++
++def message(mid=1, *, chat_id=CHANNEL, time=NOW, kind="CHANNEL", own=None):
++    return SimpleNamespace(
++        id=mid, chat_id=chat_id, time=time, type=kind,
++        reaction_info=SimpleNamespace(your_reaction=own),
++    )
++
++
++class FakeAPI:
++    def __init__(self):
++        self.sent = []
++        self.existing = None
++        self.failure = None
++
++    async def get_reactions(self, chat_id, message_ids):
++        if self.failure:
++            raise self.failure
++        return {str(message_ids[0]): SimpleNamespace(your_reaction=self.existing)}
++
++    async def add_reaction(self, chat_id, message_id, reaction):
++        self.sent.append((chat_id, message_id, reaction))
++        return SimpleNamespace(your_reaction=reaction)
++
++
++class WorkerTests(unittest.IsolatedAsyncioTestCase):
++    async def asyncSetUp(self):
++        self.directory = tempfile.TemporaryDirectory()
++        self.addCleanup(self.directory.cleanup)
++        self.module = importlib.import_module("max_reactions.worker")
++        self.state = self.module.ReactionState(Path(self.directory.name) / "state.sqlite3")
++        self.addCleanup(self.state.close)
++        self.api = FakeAPI()
++        self.worker = self.module.ReactionWorker(
++            self.api, self.state, channel_id=CHANNEL, emoji="👍",
++            started_at_ms=NOW - 1_000, max_age_ms=900_000,
++            max_per_poll=1, dry_run=False,
++        )
++
++    async def test_new_target_post_receives_one_reaction(self):
++        self.assertEqual(await self.worker.tick([message()], now_ms=NOW), 1)
++        self.assertEqual(self.api.sent, [(CHANNEL, 1, "👍")])
++
++    async def test_other_chat_and_service_events_are_ignored(self):
++        events = [message(chat_id=55), message(2, kind="SERVICE")]
++        self.assertEqual(await self.worker.tick(events, now_ms=NOW), 0)
++        self.assertEqual(self.api.sent, [])
++
++    async def test_startup_history_and_expired_posts_are_ignored(self):
++        events = [message(time=NOW - 1_000), message(2, time=NOW - 1_000_000)]
++        self.assertEqual(await self.worker.tick(events, now_ms=NOW), 0)
++
++    async def test_duplicate_events_and_repeated_polls_are_idempotent(self):
++        await self.worker.tick([message(), message()], now_ms=NOW)
++        await self.worker.tick([message()], now_ms=NOW + 100)
++        self.assertEqual(len(self.api.sent), 1)
++
++    async def test_durable_claim_survives_a_new_worker(self):
++        await self.worker.tick([message()], now_ms=NOW)
++        worker = self.module.ReactionWorker(
++            self.api, self.state, channel_id=CHANNEL, emoji="👍",
++            started_at_ms=NOW - 1_000, max_age_ms=900_000,
++            max_per_poll=1, dry_run=False,
++        )
++        await worker.tick([message()], now_ms=NOW + 100)
++        self.assertEqual(len(self.api.sent), 1)
++
++    async def test_manually_chosen_reaction_is_not_replaced(self):
++        self.api.existing = "❤️"
++        await self.worker.tick([message()], now_ms=NOW)
++        self.assertEqual(self.api.sent, [])
++
++    async def test_visible_own_reaction_is_not_replaced(self):
++        await self.worker.tick([message(own="❤️")], now_ms=NOW)
++        self.assertEqual(self.api.sent, [])
++
++    async def test_api_failure_is_not_retried_for_the_same_post(self):
++        self.api.failure = ConnectionError("test")
++        with self.assertRaises(ConnectionError):
++            await self.worker.tick([message()], now_ms=NOW)
++        self.api.failure = None
++        await self.worker.tick([message()], now_ms=NOW + 100)
++        self.assertEqual(self.api.sent, [])
++
++    async def test_rate_limit_chooses_oldest_new_post_then_next(self):
++        events = [message(2, time=NOW + 1), message()]
++        await self.worker.tick(events, now_ms=NOW + 2)
++        self.assertEqual(self.api.sent, [(CHANNEL, 1, "👍")])
++        await self.worker.tick(events, now_ms=NOW + 100)
++        self.assertEqual(self.api.sent[-1], (CHANNEL, 2, "👍"))
++
++    async def test_dry_run_never_calls_or_reserves_reactions(self):
++        self.worker.dry_run = True
++        await self.worker.tick([message()], now_ms=NOW)
++        self.assertEqual(self.api.sent, [])
++        self.worker.dry_run = False
++        await self.worker.tick([message()], now_ms=NOW)
++        self.assertEqual(len(self.api.sent), 1)
++
++    async def test_malformed_ids_and_future_messages_fail_closed(self):
++        events = [message(mid="1"), message(2, time=NOW + 1), message(3, chat_id=True)]
++        self.assertEqual(await self.worker.tick(events, now_ms=NOW), 0)
++
++    async def test_zero_target_id_is_rejected(self):
++        with self.assertRaises(ValueError):
++            self.module.ReactionWorker(
++                self.api, self.state, channel_id=0, emoji="👍",
++                started_at_ms=NOW, max_age_ms=900_000,
++                max_per_poll=1, dry_run=False,
++            )
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/max_reactions/worker.py b/max_reactions/worker.py
+new file mode 100644
+index 0000000..9a739d1
+--- /dev/null
++++ b/max_reactions/worker.py
+@@ -0,0 +1,109 @@
++from __future__ import annotations
++
++import json
++import logging
++import sqlite3
++from pathlib import Path
++from typing import Any
++
++
++def event(name: str, **fields: Any) -> None:
++    logging.getLogger("max_reactions").info(
++        json.dumps({"event": name, **fields}, ensure_ascii=False)
++    )
++
++
++class ReactionState:
++    def __init__(self, path: Path):
++        self.connection = sqlite3.connect(path, timeout=5)
++        self.connection.execute(
++            "CREATE TABLE IF NOT EXISTS attempts ("
++            "chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, "
++            "status TEXT NOT NULL, PRIMARY KEY(chat_id, message_id))"
++        )
++        self.connection.commit()
++
++    def claim(self, chat_id: int, message_id: int) -> bool:
++        cursor = self.connection.execute(
++            "INSERT OR IGNORE INTO attempts VALUES (?, ?, 'claimed')",
++            (chat_id, message_id),
++        )
++        self.connection.commit()
++        return cursor.rowcount == 1
++
++    def finish(self, chat_id: int, message_id: int, status: str) -> None:
++        self.connection.execute(
++            "UPDATE attempts SET status = ? WHERE chat_id = ? AND message_id = ?",
++            (status, chat_id, message_id),
++        )
++        self.connection.commit()
++
++    def close(self) -> None:
++        self.connection.close()
++
++
++class ReactionWorker:
++    def __init__(
++        self, api: Any, state: ReactionState, *, channel_id: int, emoji: str,
++        started_at_ms: int, max_age_ms: int, max_per_poll: int, dry_run: bool,
++    ):
++        if type(channel_id) is not int or channel_id == 0:
++            raise ValueError("TARGET_CHANNEL_ID_INVALID")
++        self.api = api
++        self.state = state
++        self.channel_id = channel_id
++        self.emoji = emoji
++        self.started_at_ms = started_at_ms
++        self.max_age_ms = max_age_ms
++        self.max_per_poll = max_per_poll
++        self.dry_run = dry_run
++
++    async def tick(self, messages: list[Any], *, now_ms: int) -> int:
++        candidates = []
++        for message in messages:
++            mid = getattr(message, "id", None)
++            chat = getattr(message, "chat_id", None)
++            timestamp = getattr(message, "time", None)
++            if (
++                type(mid) is not int or mid <= 0
++                or type(chat) is not int or chat != self.channel_id
++                or type(timestamp) is not int
++                or not max(self.started_at_ms, now_ms - self.max_age_ms) < timestamp <= now_ms
++                or getattr(message, "type", "") not in {"CHANNEL", "USER"}
++                or getattr(getattr(message, "reaction_info", None), "your_reaction", None)
++            ):
++                continue
++            candidates.append(message)
++
++        attempts = 0
++        for message in sorted(candidates, key=lambda item: (item.time, item.id)):
++            if attempts >= self.max_per_poll:
++                break
++            if self.dry_run:
++                event("dry_run_candidate", chat_id=self.channel_id, message_id=message.id)
++                attempts += 1
++                continue
++            # Commit before the request: a timeout or crash must not replay it.
++            if not self.state.claim(self.channel_id, message.id):
++                continue
++            attempts += 1
++            try:
++                reactions = await self.api.get_reactions(self.channel_id, [message.id])
++                own = (reactions or {}).get(str(message.id))
++                if getattr(own, "your_reaction", None):
++                    self.state.finish(self.channel_id, message.id, "already_reacted")
++                    continue
++                result = await self.api.add_reaction(self.channel_id, message.id, self.emoji)
++                confirmed = getattr(result, "your_reaction", None) == self.emoji
++                self.state.finish(
++                    self.channel_id, message.id, "confirmed" if confirmed else "requested"
++                )
++                event(
++                    "reaction_confirmed" if confirmed else "reaction_requested",
++                    chat_id=self.channel_id, message_id=message.id, emoji=self.emoji,
++                )
++            except Exception as error:
++                self.state.finish(self.channel_id, message.id, "failed_or_ambiguous")
++                event("reaction_failed", message_id=message.id, error_type=type(error).__name__)
++                raise
++        return attempts

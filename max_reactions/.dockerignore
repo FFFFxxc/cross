@@ -1,0 +1,7 @@
+__pycache__
+*.pyc
+.auth
+*.db
+*.db-*
+*.sqlite3
+*.png

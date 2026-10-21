@@ -1,0 +1,90 @@
+REPOSITORY=https://github.com/FFFFxxc/cross
+BRANCH=feat/max-reactions
+BASE=e4b53a9982d1e0c1781bf265ce8a0960cc9dd3b2
+CHANGED_FIELD=add isolated max_reactions service; authenticated single-account reactions enabled
+CHANNEL_URL=https://max.ru/channel_animenaruto
+CHANNEL_ID=-77809668353385
+REACTION=👍
+SOURCE_ORIGINAL_STATUS=max_reactions package absent; existing project sources left unchanged
+MODIFIED_FILE=C:\BOTS\CROSS\cross\max_reactions\__main__.py
+DIFF_FILE=C:\BOTS\CROSS\cross\artifacts\max-reactions\DIFF.patch
+VERIFICATION_FILE=C:\BOTS\CROSS\cross\artifacts\max-reactions\VERIFICATION.txt
+ROLLBACK_FILE=C:\BOTS\CROSS\cross\artifacts\max-reactions\ROLLBACK.sh
+DEPLOYED_DIRECTORY=/home/ubuntu/cross/max_reactions
+CONTAINER=cross-max-reactions
+IMAGE=cross-max-reactions:20261021
+IMAGE_ID=sha256:588a22b169ec6f3566b87b7dfe60a3425568c02a6a1732a21a77ccf62caaa17c
+SESSION_VOLUME=cross-max-reactions-data:/data
+NETWORK=host
+RESTART_POLICY=unless-stopped
+AUTHENTICATION=QR confirmed and MAX 2FA entered interactively by user; auth container exited 0
+AUTH_STATE=authenticated account bound to channel; no password, token, phone or session contents stored in report
+
+BASELINE_COMMAND=ssh ubuntu@100.96.130.28 'test ! -e ~/cross/max_reactions && echo NEW_SERVICE_DIRECTORY_ABSENT'
+BASELINE_INPUT=server before installation of the separate service
+BASELINE_LITERAL_OUTPUT=NEW_SERVICE_DIRECTORY_ABSENT
+BASELINE_EXIT_STATUS=0
+
+RED_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+RED_INPUT=12 regression tests before worker module existed
+RED_LITERAL_RESULT=FAILED (errors=12)
+RED_EXIT_STATUS=1
+
+MODIFIED_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+MODIFIED_INPUT=isolated reaction worker, config, session readiness, QR and lock regression tests
+MODIFIED_LITERAL_OUTPUT=Ran 21 tests in 0.719s
+OK
+MODIFIED_EXIT_STATUS=0
+
+LINUX_TEST_COMMAND=docker run --rm --no-healthcheck --network none --entrypoint python cross-max-reactions:20261021 -m unittest discover -s /opt/service/max_reactions/tests -q
+LINUX_TEST_INPUT=built Linux Docker image; no network, account or production data attached
+LINUX_LITERAL_OUTPUT=Ran 21 tests in 0.326s
+OK
+LINUX_EXIT_STATUS=0
+
+ROLLBACK_COMMAND=ssh ubuntu@100.96.130.28 'cd ~/cross && bash artifacts/max-reactions/ROLLBACK.sh'
+ROLLBACK_INPUT=separate disposable Docker container named cross-max-reactions, running sleep; no account or existing volume attached
+ROLLBACK_LITERAL_OUTPUT=ROLLBACK_RESULT=reaction containers removed; existing services and volumes preserved
+ROLLBACK_EXIT_STATUS=0
+RESTORED_STATUS=test reaction container absent; all protected container identities, started times, configuration hashes and SOCKS state identical to baseline; new session volume retained
+
+COPY_TEST_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+----------------------------------------------------------------------
+Ran 21 tests in 0.435s
+
+OK
+COPY_TEST_EXIT=0
+SOURCE_ROLLBACK_COMMAND=git apply --reverse artifacts/max-reactions/DIFF.patch
+SOURCE_ROLLBACK_RESULT=new service source removed from separate copy; existing tracked source unchanged
+SOURCE_ROLLBACK_EXIT=0
+
+LIVE_HEALTH_COMMAND=ssh ubuntu@100.96.130.28 'docker exec cross-max-reactions python -m max_reactions health'
+LIVE_HEALTH_INPUT=authenticated running service
+LIVE_HEALTH_OUTPUT=<empty>
+LIVE_HEALTH_EXIT_STATUS=0
+LIVE_STATUS_COMMAND=docker inspect cross-max-reactions --format "running={{.State.Running}} restarts={{.RestartCount}} health={{.State.Health.Status}}"
+LIVE_STATUS_LITERAL_OUTPUT=running=true restarts=0 health=healthy
+LIVE_STATUS_EXIT_STATUS=0
+LIVE_EVENT={"event": "worker_ready", "chat_id": -77809668353385, "dry_run": false}
+ACTUAL_NEW_POST_REACTION=not observed yet; no older post used for testing
+PROTECTED_RUNTIME_AND_CONFIG=unchanged for cross, cross-before-vpn, tg-publisher-app-1, 7 existing files, cross-data volume, telegram-socks
+PRESERVED_TELEGRAM_SOCKS_PATCH_SHA256=fe2ae10551363403f3b6f9354324e3dae22d2ab004421a0ddefb6df9b50d8edc
+DEPLOYED_SOURCE_HASHES=all 13 files match local tested source
+CONFIGURATION=30 second polls; one reaction per poll; 15 minute max age; skip startup history; preserve manual reactions; durable at-most-once claim
+MODIFIED_FILE_LEFT_CHANGED=yes, relative to base commit
+SOURCE_HASHES:
+{
+  ".dockerignore": "6c67168ddcf000e847f9f9ca0d9c2ef89f403c46de7b551f39ef77340dac5c80",
+  ".gitignore": "48f608841559c827450c84da8e034bb362892bc4927ed87405dd856fad321556",
+  "config.py": "9c2149319d1d6b1abfcc4eb65c2734562c94bccbd240dcda47317bfe6647b301",
+  "Dockerfile": "3f6d1d90d284c19c22513f8923a4234324a4040abe62cb8490aa283d2cc6bc67",
+  "manage.sh": "0b1cc7a7dcf646a1289c76a5d976b30b3df7f2a85c4fb77d5918ec73860ad951",
+  "README.md": "77704f8dbaac69bbfc05cd4c748a3e6996e29fd155980fd091dcff14a377efed",
+  "requirements.txt": "73d5140e13883ff087779b74f94877ec244692d06b0424fda0a1e115f0c75d5d",
+  "settings.toml": "378b5f77040bd7ecfa9839b1a918c07dab2b3a1e0448283fa38537db7693f1e7",
+  "worker.py": "699f9b6566a6063c0899c1647aa5ba3b6e951660793bfdd5e11e6a0ad9fa7d72",
+  "__init__.py": "6f110c26caae9eb43d254b07b7ebbdcc1391c10e08604245ff16503408a4a375",
+  "__main__.py": "93f8405d4e8d355fd5224c75d18fb956d84d36330373c6b8bbe37e14f94b9c05",
+  "tests/test_config.py": "f6ddccc93030d37a0d1b5c493c65f2d0c982c4b63107ad1f785ad921bb8ee7ad",
+  "tests/test_worker.py": "5e3eecccf038c0e5059f35f55b5ac2d76d93be78b94226cfc2790a6c876aeca4"
+}

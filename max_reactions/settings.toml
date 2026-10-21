@@ -1,0 +1,8 @@
+channel_url = "https://max.ru/channel_animenaruto"
+emoji = "👍"
+poll_seconds = 30
+history_limit = 20
+max_age_seconds = 900
+max_per_poll = 1
+request_timeout_seconds = 30
+auth_timeout_seconds = 180
