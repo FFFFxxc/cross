@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from .config import Settings, session_ready
-from .worker import ReactionState, ReactionWorker, event
+from .worker import ReactionState, ReactionWorker, bind_scoped_history, event
 
 
 class AuthRequired(RuntimeError):
@@ -138,6 +138,7 @@ async def connected_job(command: str, settings: Settings, data_dir: Path, dry_ru
             max_per_poll=settings.max_per_poll, dry_run=dry_run,
         )
         event("worker_ready", chat_id=target["chat_id"], dry_run=dry_run)
+        first_poll = True
         while not stop.is_set():
             if not client.is_connected:
                 raise ConnectionError("MAX_CONNECTION_CLOSED")
@@ -145,6 +146,14 @@ async def connected_job(command: str, settings: Settings, data_dir: Path, dry_ru
                 client.fetch_history(target["chat_id"], backward=settings.history_limit),
                 settings.request_timeout_seconds,
             )
+            messages = bind_scoped_history(messages, target["chat_id"])
+            if first_poll:
+                event(
+                    "history_ready", chat_id=target["chat_id"],
+                    message_count=len(messages),
+                    bound_to_target=sum(m.chat_id == target["chat_id"] for m in messages),
+                )
+                first_poll = False
             await asyncio.wait_for(
                 worker.tick(messages, now_ms=int(time.time() * 1000)),
                 settings.request_timeout_seconds,

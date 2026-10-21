@@ -1,0 +1,13 @@
+COPY_DIRECTORY=C:\BOTS\CROSS\cross\.worktrees\max-reactions-final-rollback
+BASE_COMMIT=e4b53a9982d1e0c1781bf265ce8a0960cc9dd3b2
+COPY_TEST_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+Executing <Task finished name='Task-63' coro=<WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id() done, defined at C:\BOTS\CROSS\cross\.worktrees\max-reactions-final-rollback\max_reactions\tests\test_worker.py:121> result=None created at C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:100> took 0.781 seconds
+----------------------------------------------------------------------
+Ran 24 tests in 1.336s
+
+OK
+COPY_TEST_EXIT=0
+SOURCE_ROLLBACK_COMMAND=git apply --reverse C:\BOTS\CROSS\cross\artifacts\max-reactions\DIFF.patch
+SOURCE_ROLLBACK_INPUT=separate copy with full new service patch applied
+SOURCE_ROLLBACK_LITERAL_RESULT=NEW_SERVICE_ABSENT; EXISTING_TRACKED_DIFF_EMPTY
+SOURCE_ROLLBACK_EXIT=0

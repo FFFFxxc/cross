@@ -43,10 +43,10 @@ index 0000000..8294ae0
 +CMD ["python", "-m", "max_reactions", "run"]
 diff --git a/max_reactions/README.md b/max_reactions/README.md
 new file mode 100644
-index 0000000..d596151
+index 0000000..f2b2056
 --- /dev/null
 +++ b/max_reactions/README.md
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,79 @@
 +# MAX reactions — отдельный сервис Desiree
 +
 +Единственная цель: один обычный MAX-аккаунт ставит 👍 новым публикациям
@@ -57,7 +57,7 @@ index 0000000..d596151
 +## Изоляция
 +
 +- Контейнер: `cross-max-reactions`; одноразовый вход: `cross-max-reactions-auth`.
-+- Образ: `cross-max-reactions:20261021`, отдельный Dockerfile и pinned requirements.
++- Образ: `cross-max-reactions:20261021.2`, отдельный Dockerfile и pinned requirements.
 +- Отдельный том: `cross-max-reactions-data:/data`; `cross-data` не подключается.
 +- Сеть `host`, без входящего HTTP-порта; MAX подключается напрямую, без Telegram SOCKS5.
 +- Лимиты: 256 МБ, 0.25 CPU, 64 PID; read-only rootfs, сброшенные capabilities.
@@ -100,7 +100,9 @@ index 0000000..d596151
 +игнорируются, включая появившиеся во время простоя. Опрос — раз в 30 секунд,
 +не более одной новой реакции за опрос, возраст публикации — до 15 минут.
 +Другие чаты и служебные сообщения отбрасываются. Выбранная вручную реакция
-+не заменяется. Перед запросом атомарно сохраняется claim в отдельной SQLite:
++не заменяется. Если MAX опускает `chat_id` в ответе истории, контекст берётся
++только из явно запрошенного целевого канала; явно указанный чужой ID не меняется.
++Перед запросом атомарно сохраняется claim в отдельной SQLite:
 +ошибка, таймаут или перезапуск не повторяют сомнительный запрос для того же поста.
 +`reaction_confirmed` означает подтверждённую сервером реакцию;
 +`reaction_requested` — запрос без подтверждения в ответе. Тексты сообщений,
@@ -133,10 +135,10 @@ index 0000000..f4bf678
 +"""Isolated, single-account reactions for one configured MAX channel."""
 diff --git a/max_reactions/__main__.py b/max_reactions/__main__.py
 new file mode 100644
-index 0000000..e6a59a7
+index 0000000..288d077
 --- /dev/null
 +++ b/max_reactions/__main__.py
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,208 @@
 +from __future__ import annotations
 +
 +import argparse
@@ -152,7 +154,7 @@ index 0000000..e6a59a7
 +from pathlib import Path
 +
 +from .config import Settings, session_ready
-+from .worker import ReactionState, ReactionWorker, event
++from .worker import ReactionState, ReactionWorker, bind_scoped_history, event
 +
 +
 +class AuthRequired(RuntimeError):
@@ -277,6 +279,7 @@ index 0000000..e6a59a7
 +            max_per_poll=settings.max_per_poll, dry_run=dry_run,
 +        )
 +        event("worker_ready", chat_id=target["chat_id"], dry_run=dry_run)
++        first_poll = True
 +        while not stop.is_set():
 +            if not client.is_connected:
 +                raise ConnectionError("MAX_CONNECTION_CLOSED")
@@ -284,6 +287,14 @@ index 0000000..e6a59a7
 +                client.fetch_history(target["chat_id"], backward=settings.history_limit),
 +                settings.request_timeout_seconds,
 +            )
++            messages = bind_scoped_history(messages, target["chat_id"])
++            if first_poll:
++                event(
++                    "history_ready", chat_id=target["chat_id"],
++                    message_count=len(messages),
++                    bound_to_target=sum(m.chat_id == target["chat_id"] for m in messages),
++                )
++                first_poll = False
 +            await asyncio.wait_for(
 +                worker.tick(messages, now_ms=int(time.time() * 1000)),
 +                settings.request_timeout_seconds,
@@ -398,15 +409,15 @@ index 0000000..d898492
 +    except sqlite3.Error:
 +        return False
 diff --git a/max_reactions/manage.sh b/max_reactions/manage.sh
-new file mode 100644
-index 0000000..08b841d
+new file mode 100755
+index 0000000..46b7aa5
 --- /dev/null
 +++ b/max_reactions/manage.sh
 @@ -0,0 +1,58 @@
 +#!/usr/bin/env bash
 +set -euo pipefail
 +DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-+IMAGE="${MAX_REACTIONS_IMAGE:-cross-max-reactions:20261021}"
++IMAGE="${MAX_REACTIONS_IMAGE:-cross-max-reactions:20261021.2}"
 +SERVICE=cross-max-reactions
 +AUTH=cross-max-reactions-auth
 +VOLUME=cross-max-reactions-data
@@ -600,10 +611,10 @@ index 0000000..cc0c09b
 +            pass
 diff --git a/max_reactions/tests/test_worker.py b/max_reactions/tests/test_worker.py
 new file mode 100644
-index 0000000..1bfd1ac
+index 0000000..c7464bd
 --- /dev/null
 +++ b/max_reactions/tests/test_worker.py
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,142 @@
 +import importlib
 +import tempfile
 +import unittest
@@ -724,20 +735,40 @@ index 0000000..1bfd1ac
 +                max_per_poll=1, dry_run=False,
 +            )
 +
++    async def test_scoped_history_restores_sdk_messages_missing_chat_id(self):
++        from pymax import Message
++        original = Message(id=7, time=NOW, type="CHANNEL")
++        values = self.module.bind_scoped_history([original], CHANNEL)
++        self.assertIsNone(original.chat_id)
++        self.assertEqual(values[0].chat_id, CHANNEL)
++        await self.worker.tick(values, now_ms=NOW)
++        self.assertEqual(self.api.sent, [(CHANNEL, 7, "👍")])
++
++    async def test_scoped_history_does_not_overwrite_foreign_chat_id(self):
++        values = self.module.bind_scoped_history([message(chat_id=55)], CHANNEL)
++        await self.worker.tick(values, now_ms=NOW)
++        self.assertEqual(values[0].chat_id, 55)
++        self.assertEqual(self.api.sent, [])
++
++    async def test_scoped_history_rejects_unknown_target(self):
++        with self.assertRaises(ValueError):
++            self.module.bind_scoped_history([message()], 0)
++
 +
 +if __name__ == "__main__":
 +    unittest.main()
 diff --git a/max_reactions/worker.py b/max_reactions/worker.py
 new file mode 100644
-index 0000000..9a739d1
+index 0000000..6c1217b
 --- /dev/null
 +++ b/max_reactions/worker.py
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,123 @@
 +from __future__ import annotations
 +
 +import json
 +import logging
 +import sqlite3
++from copy import copy
 +from pathlib import Path
 +from typing import Any
 +
@@ -746,6 +777,19 @@ index 0000000..9a739d1
 +    logging.getLogger("max_reactions").info(
 +        json.dumps({"event": name, **fields}, ensure_ascii=False)
 +    )
++
++
++def bind_scoped_history(messages: list[Any], channel_id: int) -> list[Any]:
++    """Restore omitted chat IDs using the explicitly scoped history request."""
++    if type(channel_id) is not int or channel_id == 0:
++        raise ValueError("TARGET_CHANNEL_ID_INVALID")
++    result = []
++    for message in messages:
++        clone = copy(message)
++        if getattr(clone, "chat_id", None) is None:
++            clone.chat_id = channel_id
++        result.append(clone)
++    return result
 +
 +
 +class ReactionState:

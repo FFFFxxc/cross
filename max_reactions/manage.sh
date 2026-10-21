@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-IMAGE="${MAX_REACTIONS_IMAGE:-cross-max-reactions:20261021}"
+IMAGE="${MAX_REACTIONS_IMAGE:-cross-max-reactions:20261021.2}"
 SERVICE=cross-max-reactions
 AUTH=cross-max-reactions-auth
 VOLUME=cross-max-reactions-data

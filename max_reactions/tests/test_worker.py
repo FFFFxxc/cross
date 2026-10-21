@@ -118,6 +118,25 @@ class WorkerTests(unittest.IsolatedAsyncioTestCase):
                 max_per_poll=1, dry_run=False,
             )
 
+    async def test_scoped_history_restores_sdk_messages_missing_chat_id(self):
+        from pymax import Message
+        original = Message(id=7, time=NOW, type="CHANNEL")
+        values = self.module.bind_scoped_history([original], CHANNEL)
+        self.assertIsNone(original.chat_id)
+        self.assertEqual(values[0].chat_id, CHANNEL)
+        await self.worker.tick(values, now_ms=NOW)
+        self.assertEqual(self.api.sent, [(CHANNEL, 7, "👍")])
+
+    async def test_scoped_history_does_not_overwrite_foreign_chat_id(self):
+        values = self.module.bind_scoped_history([message(chat_id=55)], CHANNEL)
+        await self.worker.tick(values, now_ms=NOW)
+        self.assertEqual(values[0].chat_id, 55)
+        self.assertEqual(self.api.sent, [])
+
+    async def test_scoped_history_rejects_unknown_target(self):
+        with self.assertRaises(ValueError):
+            self.module.bind_scoped_history([message()], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

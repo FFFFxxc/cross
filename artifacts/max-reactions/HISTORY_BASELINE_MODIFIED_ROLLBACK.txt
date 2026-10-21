@@ -1,0 +1,165 @@
+BASELINE_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+BASELINE_CWD=C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline
+BASELINE_INPUT=new SDK missing-chat-id regression tests with original worker
+BASELINE_LITERAL_OUTPUT_BEGIN
+Executing <Task finished name='Task-63' coro=<WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id() done, defined at C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py:121> exception=AttributeError("module 'max_reactions.worker' has no attribute 'bind_scoped_history'") created at C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:100> took 1.062 seconds
+======================================================================
+ERROR: test_scoped_history_does_not_overwrite_foreign_chat_id (test_worker.WorkerTests.test_scoped_history_does_not_overwrite_foreign_chat_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 131, in test_scoped_history_does_not_overwrite_foreign_chat_id
+    values = self.module.bind_scoped_history([message(chat_id=55)], CHANNEL)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+======================================================================
+ERROR: test_scoped_history_rejects_unknown_target (test_worker.WorkerTests.test_scoped_history_rejects_unknown_target)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 138, in test_scoped_history_rejects_unknown_target
+    self.module.bind_scoped_history([message()], 0)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+======================================================================
+ERROR: test_scoped_history_restores_sdk_messages_missing_chat_id (test_worker.WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 124, in test_scoped_history_restores_sdk_messages_missing_chat_id
+    values = self.module.bind_scoped_history([original], CHANNEL)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+----------------------------------------------------------------------
+Ran 24 tests in 1.654s
+
+FAILED (errors=3)
+
+BASELINE_LITERAL_OUTPUT_END
+BASELINE_EXIT_STATUS=1
+MODIFIED_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+MODIFIED_CWD=C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline
+MODIFIED_INPUT=new SDK missing-chat-id regression tests with fixed worker
+MODIFIED_LITERAL_OUTPUT_BEGIN
+Executing <Task finished name='Task-63' coro=<WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id() done, defined at C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py:121> result=None created at C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:100> took 0.640 seconds
+----------------------------------------------------------------------
+Ran 24 tests in 1.187s
+
+OK
+
+MODIFIED_LITERAL_OUTPUT_END
+MODIFIED_EXIT_STATUS=0
+ROLLBACK_COMMAND=C:\BOTS\CROSS\cross\.venv-max-reactions\Scripts\python.exe -X utf8 -m unittest discover -s max_reactions/tests -q
+ROLLBACK_CWD=C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline
+ROLLBACK_INPUT=new SDK missing-chat-id regression tests with original worker
+ROLLBACK_LITERAL_OUTPUT_BEGIN
+Executing <Task finished name='Task-63' coro=<WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id() done, defined at C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py:121> exception=AttributeError("module 'max_reactions.worker' has no attribute 'bind_scoped_history'") created at C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py:100> took 1.093 seconds
+======================================================================
+ERROR: test_scoped_history_does_not_overwrite_foreign_chat_id (test_worker.WorkerTests.test_scoped_history_does_not_overwrite_foreign_chat_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 131, in test_scoped_history_does_not_overwrite_foreign_chat_id
+    values = self.module.bind_scoped_history([message(chat_id=55)], CHANNEL)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+======================================================================
+ERROR: test_scoped_history_rejects_unknown_target (test_worker.WorkerTests.test_scoped_history_rejects_unknown_target)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 138, in test_scoped_history_rejects_unknown_target
+    self.module.bind_scoped_history([message()], 0)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+======================================================================
+ERROR: test_scoped_history_restores_sdk_messages_missing_chat_id (test_worker.WorkerTests.test_scoped_history_restores_sdk_messages_missing_chat_id)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 90, in _callTestMethod
+    if self._callMaybeAsync(method) is not None:
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\unittest\async_case.py", line 112, in _callMaybeAsync
+    return self._asyncioRunner.run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\USER\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 664, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\BOTS\CROSS\cross\.worktrees\max-reactions-history-baseline\max_reactions\tests\test_worker.py", line 124, in test_scoped_history_restores_sdk_messages_missing_chat_id
+    values = self.module.bind_scoped_history([original], CHANNEL)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'max_reactions.worker' has no attribute 'bind_scoped_history'
+
+----------------------------------------------------------------------
+Ran 24 tests in 1.673s
+
+FAILED (errors=3)
+
+ROLLBACK_LITERAL_OUTPUT_END
+ROLLBACK_EXIT_STATUS=1
+ORIGINAL_WORKER_SHA256=c8cb0a0cc6ea2e430a80193a798376278ffe4efe651e1fc59e495d6051fb2523
+MODIFIED_WORKER_SHA256=76df927c9b17f0a9d44af2d6c5f7ed2dc70cf43339d84a013f7a08a97d926fb4
+RESTORED_BEHAVIOR=original three missing-chat-id failures reproduced only on isolated rollback copy

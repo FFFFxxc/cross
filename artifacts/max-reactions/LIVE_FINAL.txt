@@ -1,0 +1,6 @@
+HEALTH_COMMAND=docker exec cross-max-reactions python -m max_reactions health
+HEALTH_OUTPUT=''
+HEALTH_EXIT=0
+running=true restarts=0 health=healthy image=cross-max-reactions:20261021.2
+{"event": "worker_ready", "chat_id": -77809668353385, "dry_run": false}
+{"event": "history_ready", "chat_id": -77809668353385, "message_count": 20, "bound_to_target": 20}

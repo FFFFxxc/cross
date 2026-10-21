@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from copy import copy
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,19 @@ def event(name: str, **fields: Any) -> None:
     logging.getLogger("max_reactions").info(
         json.dumps({"event": name, **fields}, ensure_ascii=False)
     )
+
+
+def bind_scoped_history(messages: list[Any], channel_id: int) -> list[Any]:
+    """Restore omitted chat IDs using the explicitly scoped history request."""
+    if type(channel_id) is not int or channel_id == 0:
+        raise ValueError("TARGET_CHANNEL_ID_INVALID")
+    result = []
+    for message in messages:
+        clone = copy(message)
+        if getattr(clone, "chat_id", None) is None:
+            clone.chat_id = channel_id
+        result.append(clone)
+    return result
 
 
 class ReactionState:
