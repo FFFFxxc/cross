@@ -4,15 +4,19 @@ import asyncio
 import base64
 import hashlib
 import ipaddress
+import json
 import os
 import re
+import secrets
 import socket
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from urllib.parse import unquote, urlparse
 
 import httpx
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from PIL import Image
 
 from .previews import capture_preview
 from .selection import sanitize_message_text
@@ -59,6 +63,8 @@ _STYLE_HINTS = (
     "Форма этой подписи: один эмодзи и короткая фраза.",
     "Форма этой подписи: очень короткий вопрос по ситуации.",
 )
+MAX_PROFILE_MODELS = 3
+MODEL_TIMEOUT_SECONDS = 20
 
 
 class AiCaptionError(RuntimeError):
@@ -76,7 +82,7 @@ class AiCaptionGenerationError(AiCaptionError):
         self.failures = tuple(failures)
         super().__init__(
             "; ".join(
-                f"провайдер {failure.provider.index}: {failure.error}"
+                f"профиль {failure.provider.index}, {failure.provider.model}: {failure.error}"
                 for failure in failures
             )[:1000]
             or "Нет доступных AI-провайдеров."
@@ -93,6 +99,25 @@ class AiProvider:
     @property
     def label(self) -> str:
         return f"{self.index}:{self.model}"
+
+    @property
+    def cooldown_key(self) -> str:
+        digest = hashlib.sha256(f"{self.base_url}\0{self.model}".encode()).hexdigest()
+        return f"ai_provider_{self.index}_model_{digest}_cooldown_until"
+
+
+def _profile_models(primary: str, raw: str) -> list[str]:
+    try:
+        models = json.loads(raw)
+    except (ValueError, TypeError):
+        models = None
+    if (
+        primary and isinstance(models, list) and 1 <= len(models) <= MAX_PROFILE_MODELS
+        and all(isinstance(model, str) and 0 < len(model) <= 200 and model == model.strip() for model in models)
+        and models[0] == primary and len(set(models)) == len(models)
+    ):
+        return models
+    return [primary] if primary else []
 
 
 def _secret_key(secret: str) -> bytes:
@@ -250,19 +275,37 @@ class AiCaptionClient:
             if isinstance(data, dict):
                 error = data.get("error")
                 detail = str(error.get("message") if isinstance(error, dict) else error or data.get("message") or "")
+            detail = detail.replace(provider.api_key, "[скрыто]") if provider.api_key else detail
             raise AiCaptionError(f"HTTP {response.status_code}: {detail[:240]}".rstrip())
         text = _response_text(data)
         if not text.strip():
             raise AiCaptionError("Провайдер не вернул текст в OpenAI-совместимом формате.")
         return text
 
+    async def _bounded_complete(self, provider: AiProvider, messages: list[dict], max_tokens: int) -> str:
+        try:
+            return await asyncio.wait_for(
+                self._complete(provider, messages, max_tokens), MODEL_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise AiCaptionError(f"Модель не ответила за {MODEL_TIMEOUT_SECONDS} сек.") from exc
+
     async def test(self, provider: AiProvider) -> str:
-        result = await self._complete(
+        color = secrets.choice(("RED", "BLUE", "GREEN", "YELLOW"))
+        with BytesIO() as buffer, Image.new("RGB", (96, 96), color.lower()) as image:
+            image.save(buffer, format="PNG")
+            encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+        result = await self._bounded_complete(
             provider,
-            [{"role": "user", "content": "Ответь ровно: связь есть"}],
-            16,
+            [{"role": "user", "content": [
+                {"type": "text", "text": "What color is the image? Answer with exactly one word: RED, BLUE, GREEN, or YELLOW."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{encoded}"}},
+            ]}],
+            64,
         )
-        return " ".join(result.split())[:160]
+        if result.strip().strip("`*\"'.! ").upper() != color:
+            raise AiCaptionError("Модель не распознала цвет тестового изображения.")
+        return "Изображение распознано"
 
     async def generate_with_fallback(
         self,
@@ -300,7 +343,7 @@ class AiCaptionClient:
         failures: list[AiProviderFailure] = []
         for provider in providers:
             try:
-                raw = await self._complete(provider, messages, 120)
+                raw = await self._bounded_complete(provider, messages, 120)
                 return (
                     _clean_generated_caption(raw, max_chars),
                     provider,
@@ -374,27 +417,30 @@ class AiCaptionService:
         except (TypeError, ValueError):
             return 20
 
-    def providers(self) -> list[AiProvider]:
+    def providers(self, only_index: int | None = None) -> list[AiProvider]:
         providers: list[AiProvider] = []
-        for index in (1, 2):
-            base_url = (self.state.get_setting(f"ai_provider_{index}_base_url", "") or "").strip()
-            model = (self.state.get_setting(f"ai_provider_{index}_model", "") or "").strip()
-            encrypted = (self.state.get_setting(f"ai_provider_{index}_api_key", "") or "").strip()
-            if not (base_url and model and encrypted):
+        indices = (only_index,) if only_index is not None else (1, 2)
+        keys = (f"ai_provider_{index}_{field}" for index in indices for field in ("base_url", "model", "models", "api_key"))
+        values = self.state.get_settings(keys)
+        for index in indices:
+            prefix = f"ai_provider_{index}_"
+            base_url = values.get(prefix + "base_url", "").strip()
+            models = _profile_models(values.get(prefix + "model", "").strip(), values.get(prefix + "models", ""))
+            encrypted = values.get(prefix + "api_key", "").strip()
+            if not (base_url and models and encrypted):
                 continue
-            providers.append(
-                AiProvider(
-                    index,
-                    base_url,
-                    decrypt_secret(encrypted, self.credential_secret),
-                    model,
-                )
-            )
+            try:
+                api_key = decrypt_secret(encrypted, self.credential_secret)
+            except AiCaptionError:
+                if only_index is not None:
+                    raise
+                continue
+            providers.extend(AiProvider(index, base_url, api_key, model) for model in models)
         return providers
 
     def _cooldown_until(self, provider: AiProvider) -> datetime | None:
         raw = self.state.get_setting(
-            f"ai_provider_{provider.index}_cooldown_until",
+            provider.cooldown_key,
             "",
         )
         if not raw:
@@ -407,23 +453,11 @@ class AiCaptionService:
 
     def _ordered_available_providers(self) -> list[AiProvider]:
         now = datetime.now(timezone.utc)
-        available = [
+        return [
             provider
             for provider in self.providers()
             if (self._cooldown_until(provider) or now) <= now
         ]
-        if not available:
-            return []
-        try:
-            preferred = int(
-                self.state.get_setting("ai_next_provider_index", "1") or 1
-            )
-        except (TypeError, ValueError):
-            preferred = 1
-        return sorted(
-            available,
-            key=lambda provider: (provider.index != preferred, provider.index),
-        )
 
     def _mark_provider_failed(
         self,
@@ -433,7 +467,7 @@ class AiCaptionService:
         seconds = 1800 if re.search(r"HTTP (?:401|403|429)\b", failure.error) else 300
         cooldown_until = datetime.now(timezone.utc) + timedelta(seconds=seconds)
         self.state.set_setting(
-            f"ai_provider_{failure.provider.index}_cooldown_until",
+            failure.provider.cooldown_key,
             cooldown_until.isoformat(),
         )
         self.state.record_event(
@@ -449,15 +483,9 @@ class AiCaptionService:
 
     def _mark_provider_succeeded(self, provider: AiProvider) -> None:
         self.state.set_setting(
-            f"ai_provider_{provider.index}_cooldown_until",
+            provider.cooldown_key,
             "",
         )
-        configured = self.providers()
-        other = next(
-            (value for value in configured if value.index != provider.index),
-            provider,
-        )
-        self.state.set_setting("ai_next_provider_index", str(other.index))
 
     async def _messages(self, item: QueueItem):
         values = await self.telegram_client.get_messages(
@@ -578,17 +606,21 @@ class AiCaptionService:
             await sleep(self.interval_seconds() if processed else 10)
 
     async def test_provider(self, index: int) -> dict[str, object]:
-        provider = next((value for value in self.providers() if value.index == index), None)
-        if provider is None:
+        providers = self.providers(only_index=index)
+        if not providers:
             raise AiCaptionError(f"AI-провайдер {index} настроен не полностью.")
-        try:
-            async with self._generation_lock:
-                reply = await self.client.test(provider)
-        except Exception as exc:
-            self._mark_provider_failed(AiProviderFailure(provider, str(exc)), None)
-            raise
-        self._mark_provider_succeeded(provider)
-        return {"provider": index, "model": provider.model, "reply": reply}
+        results = []
+        async with self._generation_lock:
+            for provider in providers:
+                try:
+                    await self.client.test(provider)
+                except Exception as exc:
+                    error = str(exc) if isinstance(exc, AiCaptionError) else type(exc).__name__
+                    results.append({"model": provider.model, "ok": False, "error": error})
+                else:
+                    results.append({"model": provider.model, "ok": True})
+        working = sum(result["ok"] for result in results)
+        return {"provider": index, "models": results, "reply": f"Работают: {working} из {len(results)}"}
 
     async def aclose(self) -> None:
         await self.client.aclose()

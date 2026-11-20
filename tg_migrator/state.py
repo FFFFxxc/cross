@@ -7,7 +7,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import bindparam, create_engine, inspect, text
 from sqlalchemy.engine import Engine, RowMapping
 
 CONTENT_CATEGORIES = {"content", "news"}
@@ -432,6 +432,14 @@ class MigrationState:
                 {"key": key},
             ).scalar_one_or_none()
             return default if value is None else str(value)
+
+    def get_settings(self, keys: Iterable[str]) -> dict[str, str]:
+        statement = text("SELECT key, value FROM automation_settings WHERE key IN :keys").bindparams(
+            bindparam("keys", expanding=True),
+        )
+        with self._engine.connect() as connection:
+            rows = connection.execute(statement, {"keys": list(keys)})
+            return {key: value for key, value in rows}
 
     def set_slot(self, slot: Slot) -> None:
         if slot.kind not in {"any", "video", "image", "news"}:

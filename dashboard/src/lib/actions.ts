@@ -61,10 +61,18 @@ const httpsBaseUrl = z.string().trim().max(500).refine((value) => {
 const aiProviderInput = z.object({
   index: z.union([z.literal(1), z.literal(2)]),
   baseUrl: httpsBaseUrl,
-  model: z.string().trim().max(200),
+  model: z.string().trim().max(200).optional(),
+  models: z.array(z.string().trim().min(1).max(200)).max(3).refine(
+    (models) => new Set(models).size === models.length,
+    "Модели в одном профиле не должны повторяться.",
+  ).optional(),
   apiKey: z.string().trim().max(1000).optional().default(""),
   clearKey: z.boolean().optional().default(false),
-});
+}).transform(({ model, models, ...provider }) => ({
+  ...provider,
+  models: models ?? (model ? [model] : []),
+  legacyInput: models === undefined,
+}));
 
 export const aiSettingsInput = z.object({
   enabled: z.boolean(),
@@ -77,8 +85,8 @@ export const aiSettingsInput = z.object({
   (value) => new Set(value.providers.map((provider) => provider.index)).size === 2,
   "Нужны настройки провайдеров 1 и 2.",
 ).refine(
-  (value) => value.providers.every((provider) => (!provider.baseUrl && !provider.model) || (provider.baseUrl && provider.model)),
-  "Для провайдера заполните одновременно Base URL и модель.",
+  (value) => value.providers.every((provider) => Boolean(provider.baseUrl) === Boolean(provider.models.length)),
+  "Для каждого профиля укажите Base URL и хотя бы одну модель или оставьте оба поля пустыми.",
 );
 
 export type ActionRow = {

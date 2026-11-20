@@ -1,16 +1,22 @@
+import base64
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import httpx
+from PIL import Image
 
 from tg_migrator.ai_captions import (
     AiCaptionError,
     AiCaptionClient,
     AiCaptionService,
     AiProvider,
+    AiProviderFailure,
     _clean_generated_caption,
     decrypt_secret,
     encrypt_secret,
@@ -51,6 +57,85 @@ class FakeAiClient:
 
 
 class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
+    def set_profile(self, state, index, *models):
+        prefix = f"ai_provider_{index}_"
+        state.set_setting(prefix + "base_url", f"https://router{index}.example/v1")
+        state.set_setting(prefix + "api_key", encrypt_secret(f"key-{index}", "secret"))
+        state.set_setting(prefix + "model", models[0])
+        if len(models) > 1:
+            state.set_setting(prefix + "models", json.dumps(models))
+
+    async def test_same_url_fallback_stops_at_first_valid_caption(self):
+        state = MigrationState(Path(":memory:"))
+        self.addCleanup(state.close)
+        self.set_profile(state, 1, "broken", "blind", "vision")
+        self.set_profile(state, 2, "unused")
+        calls = []
+
+        async def resolve(_url):
+            pass
+
+        async def handler(request):
+            model = json.loads(request.content)["model"]
+            calls.append(model)
+            self.assertEqual(request.url.host, "router1.example")
+            self.assertEqual(request.headers["Authorization"], "Bearer key-1")
+            if model == "broken":
+                return httpx.Response(429, json={"error": "key-1"})
+            return httpx.Response(200, json={"choices": [{"message": {"content": "SKIP" if model == "blind" else "Опять он"}}]})
+
+        client = AiCaptionClient(transport=httpx.MockTransport(handler), resolver=resolve)
+        self.addAsyncCleanup(client.aclose)
+        service = AiCaptionService(None, state, "secret", client=client)
+        caption, winner, failures = await client.generate_with_fallback(
+            service.providers(), image=b"test", mime_type="image/png", prompt="test", max_chars=75, context="test",
+        )
+        self.assertEqual(calls, ["broken", "blind", "vision"])
+        self.assertEqual((caption, winner.model), ("Опять он", "vision"))
+        self.assertNotIn("key-1", failures[0].error)
+        for failure in failures:
+            service._mark_provider_failed(failure, None)
+        self.assertEqual([p.model for p in service._ordered_available_providers()], ["vision", "unused"])
+
+    async def test_profile_check_reports_every_model_even_after_first_pass(self):
+        state = MigrationState(Path(":memory:"))
+        self.addCleanup(state.close)
+        self.set_profile(state, 1, "vision", "blind", "backup")
+        self.set_profile(state, 2, "not-tested")
+        calls = []
+
+        async def resolve(_url):
+            pass
+
+        async def handler(request):
+            body = json.loads(request.content)
+            calls.append(body["model"])
+            encoded = body["messages"][0]["content"][1]["image_url"]["url"].split(",", 1)[1]
+            with Image.open(BytesIO(base64.b64decode(encoded))) as image:
+                self.assertEqual(image.getpixel((0, 0)), (255, 0, 0))
+            reply = "BLUE" if body["model"] == "blind" else "RED"
+            return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
+
+        client = AiCaptionClient(transport=httpx.MockTransport(handler), resolver=resolve)
+        self.addAsyncCleanup(client.aclose)
+        service = AiCaptionService(None, state, "secret", client=client)
+        first = service.providers()[0]
+        service._mark_provider_failed(AiProviderFailure(first, "HTTP 429"), None)
+        with patch("tg_migrator.ai_captions.secrets.choice", return_value="RED"):
+            result = await service.test_provider(1)
+        self.assertEqual(calls, ["vision", "blind", "backup"])
+        self.assertEqual([v["ok"] for v in result["models"]], [True, False, True])
+        self.assertIsNotNone(service._cooldown_until(first))
+
+    def test_legacy_or_conflicting_settings_keep_primary_model(self):
+        state = MigrationState(Path(":memory:"))
+        self.addCleanup(state.close)
+        self.set_profile(state, 1, "legacy")
+        service = AiCaptionService(None, state, "secret", client=FakeAiClient())
+        self.assertEqual([p.model for p in service.providers()], ["legacy"])
+        state.set_setting("ai_provider_1_models", '["old", "other"]')
+        self.assertEqual([p.model for p in service.providers()], ["legacy"])
+
     def test_rejects_meta_answers_and_overlong_captions(self):
         invalid = (
             "Пришлите изображение и укажите желаемый тон",
@@ -180,7 +265,7 @@ class AiCaptionTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(generated.ai_caption_status, "generated")
             self.assertEqual(generated.ai_caption_provider, "2:vision-two")
             self.assertEqual(len(fake_ai.calls), 1)
-            self.assertEqual(state.get_setting("ai_next_provider_index"), "1")
+            self.assertEqual([p.index for p in service._ordered_available_providers()], [1, 2])
             self.assertEqual(state.recent_actions(1)[0].kind, "ai_caption_generated")
             state.close()
 

@@ -9,11 +9,23 @@ export const DEFAULT_AI_PROMPT = "Ты ведёшь небольшой живо�
 
 const KEYS = [
   "ai_enabled", "ai_prompt", "ai_max_chars", "ai_auto_delay_seconds", "ai_interval_seconds",
-  "ai_provider_1_base_url", "ai_provider_1_model", "ai_provider_1_api_key",
-  "ai_provider_2_base_url", "ai_provider_2_model", "ai_provider_2_api_key",
+  "ai_provider_1_base_url", "ai_provider_1_model", "ai_provider_1_models", "ai_provider_1_api_key",
+  "ai_provider_2_base_url", "ai_provider_2_model", "ai_provider_2_models", "ai_provider_2_api_key",
 ] as const;
 
 type SettingRow = { key: string; value: string };
+
+function readModels(primary: string, raw: string | undefined): string[] {
+  try {
+    const models: unknown = JSON.parse(raw ?? "null");
+    if (primary && Array.isArray(models) && models.length <= 3 && models[0] === primary &&
+        models.every((model) => typeof model === "string" && model.length > 0 && model.length <= 200 && model === model.trim()) &&
+        new Set(models).size === models.length) return models;
+  } catch {
+    // The single-model settings also work when the extra key is missing or invalid.
+  }
+  return primary ? [primary] : [];
+}
 
 function safeSettings(rows: SettingRow[]) {
   const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
@@ -26,7 +38,8 @@ function safeSettings(rows: SettingRow[]) {
     providers: ([1, 2] as const).map((index) => ({
       index,
       baseUrl: values[`ai_provider_${index}_base_url`] || "",
-      model: values[`ai_provider_${index}_model`] || "",
+      model: values[`ai_provider_${index}_model`]?.trim() || "",
+      models: readModels(values[`ai_provider_${index}_model`]?.trim() || "", values[`ai_provider_${index}_models`]),
       hasKey: Boolean(values[`ai_provider_${index}_api_key`]),
     })),
   };
@@ -61,8 +74,11 @@ export async function PUT(request: Request) {
     for (const provider of parsed.providers) {
       entries.push(
         [`ai_provider_${provider.index}_base_url`, provider.baseUrl],
-        [`ai_provider_${provider.index}_model`, provider.model],
+        [`ai_provider_${provider.index}_model`, provider.models[0] || ""],
       );
+      if (!provider.legacyInput) {
+        entries.push([`ai_provider_${provider.index}_models`, JSON.stringify(provider.models)]);
+      }
       if (provider.clearKey) {
         entries.push([`ai_provider_${provider.index}_api_key`, ""]);
       } else if (provider.apiKey) {
