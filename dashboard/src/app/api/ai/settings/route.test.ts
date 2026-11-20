@@ -32,9 +32,31 @@ describe("AI settings route", () => {
     expect(payload.settings.providers[0]).toMatchObject({
       baseUrl: "https://router.example/v1",
       model: "vision-model",
+      models: ["vision-model"],
       hasKey: true,
     });
     expect(JSON.stringify(payload)).not.toContain("secret-ciphertext");
+  });
+
+  it("round-trips ordered models, keeping the legacy primary and stored key", async () => {
+    mocks.query.mockResolvedValue([
+      { key: "ai_provider_1_model", value: "first" },
+      { key: "ai_provider_1_models", value: '["first","backup"]' },
+      { key: "ai_provider_1_api_key", value: "enc:v1:secret-ciphertext" },
+    ]);
+    const put = (models: string[]) => PUT(request({
+      enabled: true, prompt: "Короткая подпись", maxChars: 75,
+      providers: [{ index: 1, baseUrl: "https://router.example/v1", models }, { index: 2, baseUrl: "", models: [] }],
+    }));
+    const response = await put(["first", "backup"]);
+    expect(response.status).toBe(200);
+    expect((await response.json()).settings.providers[0].models).toEqual(["first", "backup"]);
+    const values = mocks.query.mock.calls[0][1];
+    expect(values[values.indexOf("ai_provider_1_model") + 1]).toBe("first");
+    expect(values[values.indexOf("ai_provider_1_models") + 1]).toBe('["first","backup"]');
+    expect(values).not.toContain("ai_provider_1_api_key");
+    expect((await put(["first", " first "])).status).toBe(400);
+    expect((await put(["a", "b", "c", "d"])).status).toBe(400);
   });
 
   it("encrypts a new key and preserves it when the password field is blank", async () => {

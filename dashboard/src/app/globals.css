@@ -92,6 +92,12 @@ textarea { padding: 12px; resize: vertical; }
 .provider-grid legend { padding: 0 7px; font-weight: 800; }
 .provider-grid label { color: var(--muted); font-size: 12px; font-weight: 700; }
 .provider-grid small { color: var(--muted); }
+.ai-model-list { display: grid; gap: 10px; }
+.ai-model-row { display: flex; align-items: end; gap: 6px; }
+.ai-model-row > label { flex: 1; min-width: 0; }
+.ai-model-controls { display: flex; gap: 4px; }
+.ai-model-controls button { padding-inline: 8px; }
+.ai-model-results { display: grid; gap: 6px; padding-inline-start: 18px; margin: 0; overflow-wrap: anywhere; }
 .ai-prompt-grid { align-items: start; }
 .ai-caption { margin: 14px 0; padding: 12px; border: 1px solid #4d3c91; border-radius: 12px; background: #211b3b; }
 .ai-caption p { margin: 6px 0; line-height: 1.4; }
